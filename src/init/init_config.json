@@ -1,0 +1,193 @@
+{
+  "game_startup": {
+    "steps": [
+      {
+        "id": "select_game_mode",
+        "name": "选择游戏模式",
+        "order": 1,
+        "required": true,
+        "options": {
+          "player_count": [
+            {
+              "value": 9,
+              "label": "9人局",
+              "boards": [
+                {
+                  "value": "standard",
+                  "label": "标准场",
+                  "config_file": "9p_standard.json"
+                }
+              ]
+            },
+            {
+              "value": 12,
+              "label": "12人局",
+              "boards": [
+                {
+                  "value": "wolfking_guard",
+                  "label": "狼王守卫场",
+                  "config_file": "12p_wolfking_guard.json"
+                },
+                {
+                  "value": "miracle_merchant",
+                  "label": "奇迹商人场",
+                  "config_file": "12p_miracle_merchant.json"
+                }
+              ]
+            }
+          ],
+          "custom_board": {
+            "enabled": false,
+            "max_roles": 20
+          }
+        }
+      },
+      {
+        "id": "configure_ai_api",
+        "name": "配置AI API",
+        "order": 2,
+        "required": true,
+        "options": {
+          "api_allocation": {
+            "mode": "random",
+            "min_apis": 1,
+            "max_apis": 12,
+            "test_connections": true
+          },
+          "api_settings": {
+            "default_personality": "平衡型",
+            "default_strategy": "平衡",
+            "timeout": 30000,
+            "retry_count": 3
+          }
+        }
+      },
+      {
+        "id": "role_assignment",
+        "name": "角色分配",
+        "order": 3,
+        "required": true,
+        "options": {
+          "method": "random",
+          "ensure_balance": true,
+          "preserve_last_assignment": false,
+          "role_restrictions": {
+            "min_wolves": 1,
+            "max_wolves": 4,
+            "min_civilians": 2,
+            "min_special_roles": 1
+          }
+        }
+      },
+      {
+        "id": "game_start",
+        "name": "游戏开始",
+        "order": 4,
+        "required": true,
+        "options": {
+          "judge_intro": {
+            "enabled": true,
+            "duration": 10000,
+            "include_rules": true
+          },
+          "first_night": {
+            "order": [
+              "狼人",
+              "预言家",
+              "女巫",
+              "守卫"
+            ],
+            "action_timeout": 30000
+          },
+          "game_flow": {
+            "auto_progress": true,
+            "min_speech_time": 60,
+            "max_speech_time": 180,
+            "vote_timeout": 30000
+          }
+        }
+      },
+      {
+        "id": "game_recording",
+        "name": "游戏记录",
+        "order": 5,
+        "required": false,
+        "options": {
+          "record_all_actions": true,
+          "save_game_result": true,
+          "generate_report": true,
+          "report_format": "html",
+          "save_directory": "./game_records",
+          "max_history": 100
+        }
+      }
+    ],
+    "defaults": {
+      "player_count": 12,
+      "board": "wolfking_guard",
+      "api_mode": "random",
+      "voice_enabled": true,
+      "game_speed": "normal"
+    },
+    "validation": {
+      "check_api_connections": true,
+      "validate_role_config": true,
+      "test_voice_engine": false,
+      "auto_fix_errors": true
+    }
+  },
+  "game_phases": {
+    "night": {
+      "duration": 60000,
+      "action_order": [
+        "狼人",
+        "预言家",
+        "女巫",
+        "守卫"
+      ],
+      "silent_mode": true
+    },
+    "day": {
+      "speech_order": "顺时针",
+      "max_speech_time": 180,
+      "vote_duration": 30000,
+      "allow_last_words": true
+    },
+    "special_phases": {
+      "sheriff_election": {
+        "enabled": true,
+        "speech_time": 120,
+        "vote_time": 30000
+      },
+      "last_words": {
+        "enabled": true,
+        "max_duration": 120,
+        "allowed_nights": [1, 2]
+      }
+    }
+  },
+  "game_rules": {
+    "victory_conditions": {
+      "好人": "所有狼人出局",
+      "狼人": "屠边规则 - 所有平民出局或所有神职出局"
+    },
+    "special_rules": {
+      "double_explosion": true,
+      "witch_self_save": false,
+      "same_guard_save": true,
+      "last_words_limit": 2
+    },
+    "terminology": {
+      "查杀": "在夜晚被预言家查验身份时查验出来狼人玩家并在发言环节点爆狼人身份",
+      "金水": "在夜晚被预言家查验身份时查验出来或因骑士决斗而表明身份的好人玩家",
+      "银水": "在夜晚被女巫用解药救活的玩家",
+      "铜水": "在夜晚同时被狼人击杀和守卫守护的玩家",
+      "上警": "在警长竞选环节参与警长竞选",
+      "警徽流": "玩家在起跳预言家时，表明自己即将在下个夜晚或及后一个夜晚查验的玩家，并且将警徽在自己死后的安排说明完整",
+      "自爆": "狼人在白天发言阶段认狼并翻牌出局使游戏强制进入黑夜",
+      "归票": "末置位发言的玩家在发言即将结束时号召放逐某位玩家",
+      "冲票": "狼人在放逐投票阶段同时放逐某位玩家",
+      "绑票": "当场上狼人数量大于或等于好人数量时，狼人在放逐投票阶段同时放逐某位玩家"
+    }
+  }
+}

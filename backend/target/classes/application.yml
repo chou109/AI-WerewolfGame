@@ -1,0 +1,85 @@
+server:
+  port: 8081
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: ai-werewolf-game
+  
+  # 数据库配置
+  datasource:
+    url: jdbc:mysql://localhost:3306/werewolf_game?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    type: com.alibaba.druid.pool.DruidDataSource
+    druid:
+      initial-size: 5
+      min-idle: 5
+      max-active: 20
+      max-wait: 60000
+      time-between-eviction-runs-millis: 60000
+      min-evictable-idle-time-millis: 300000
+      validation-query: SELECT 1 FROM DUAL
+      test-while-idle: true
+      test-on-borrow: false
+      test-on-return: false
+      pool-prepared-statements: true
+      max-pool-prepared-statement-per-connection-size: 20
+      filters: stat,wall,slf4j
+      connection-properties: druid.stat.mergeSql=true;druid.stat.slowSqlMillis=5000
+
+  # Redis配置
+  redis:
+    host: localhost
+    port: 6379
+    password: 
+    database: 0
+    timeout: 10000
+    lettuce:
+      pool:
+        max-active: 8
+        max-wait: -1
+        max-idle: 8
+        min-idle: 0
+
+  # 定时任务
+  quartz:
+    job-store-type: memory
+    auto-startup: true
+
+# MyBatis-Plus配置
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.werewolf.game.entity
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+# JWT配置
+jwt:
+  secret: werewolf_game_secret_key
+  expire: 3600000
+  header: Authorization
+
+# Swagger配置
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: true
+
+# 日志配置
+logging:
+  level:
+    root: info
+    com.werewolf.game: debug
+  file:
+    name: logs/werewolf-game.log

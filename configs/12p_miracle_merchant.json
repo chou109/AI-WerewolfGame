@@ -1,0 +1,22 @@
+{
+  "player_count": 12,
+  "roles": [
+    {"role": "狼人", "count": 4, "api_slots": 4},
+    {"role": "平民", "count": 4, "api_slots": 4},
+    {"role": "预言家", "count": 1, "api_slots": 1},
+    {"role": "女巫", "count": 1, "api_slots": 1},
+    {"role": "守卫", "count": 1, "api_slots": 1},
+    {"role": "奇迹商人", "count": 1, "api_slots": 1}
+  ],
+  "rules": {
+    "game_mode": "经典模式",
+    "card_type": "暗牌",
+    "has_sheriff": true,
+    "last_words": "前两晚有遗言",
+    "special_rules": [
+      "女巫不能自救",
+      "奇迹商人交易失败则次日死亡",
+      "双曝吞警徽"
+    ]
+  }
+}

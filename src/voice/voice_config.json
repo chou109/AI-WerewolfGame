@@ -1,0 +1,92 @@
+{
+  "voice_engines": [
+    {
+      "name": "OpenAI TTS",
+      "enabled": false,
+      "api_key": "",
+      "model": "tts-1",
+      "voice": "alloy"
+    },
+    {
+      "name": "Azure Speech",
+      "enabled": false,
+      "subscription_key": "",
+      "region": "",
+      "voice": "zh-CN-XiaoxiaoNeural"
+    },
+    {
+      "name": "Google TTS",
+      "enabled": false,
+      "api_key": "",
+      "voice": "zh-CN-Standard-A"
+    },
+    {
+      "name": "自定义引擎",
+      "enabled": false,
+      "url": "",
+      "params": {}
+    }
+  ],
+  "voice_styles": {
+    "default": {
+      "speed": "normal",
+      "pitch": "medium",
+      "emotion": "medium"
+    },
+    "personalities": {
+      "谨慎型": {
+        "speed": "medium",
+        "pitch": "stable",
+        "pause": "high",
+        "voice": "calm"
+      },
+      "激进型": {
+        "speed": "fast",
+        "pitch": "high",
+        "pause": "low",
+        "voice": "firm"
+      },
+      "逻辑型": {
+        "speed": "stable",
+        "pitch": "medium",
+        "emphasis": "high",
+        "voice": "clear"
+      },
+      "直觉型": {
+        "speed": "variable",
+        "pitch": "medium",
+        "hesitation": "medium",
+        "voice": "thoughtful"
+      },
+      "表演型": {
+        "speed": "variable",
+        "pitch": "high",
+        "emotion": "high",
+        "voice": "expressive"
+      },
+      "沉默型": {
+        "speed": "slow",
+        "pitch": "low",
+        "pause": "high",
+        "voice": "concise"
+      }
+    }
+  },
+  "speech_processing": {
+    "text_analysis": true,
+    "emotion_detection": true,
+    "voice_rendering": true,
+    "audio_caching": true
+  },
+  "audio_settings": {
+    "format": "mp3",
+    "sample_rate": 24000,
+    "bitrate": 128000,
+    "volume": 80
+  },
+  "performance": {
+    "max_queue_size": 10,
+    "timeout": 15000,
+    "retry_count": 2
+  }
+}

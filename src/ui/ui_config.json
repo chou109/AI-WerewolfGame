@@ -1,0 +1,113 @@
+{
+  "interface_layers": {
+    "main_game_area": {
+      "player_status_panel": {
+        "show_avatars": true,
+        "show_alive_status": true,
+        "show_sheriff_badge": true,
+        "highlight_speaker": true,
+        "player_size": "medium",
+        "layout": "circle"
+      },
+      "speech_records": {
+        "show_timestamps": true,
+        "show_speaker_icons": true,
+        "max_history": 50,
+        "auto_scroll": true,
+        "text_size": "medium"
+      },
+      "vote_results": {
+        "real_time_display": true,
+        "show_vote_count": true,
+        "highlight_out_player": true,
+        "animation_duration": 1000
+      }
+    },
+    "info_panel": {
+      "game_status": {
+        "show_current_phase": true,
+        "show_day_number": true,
+        "show_alive_count": true,
+        "show_sheriff": true,
+        "update_interval": 1000
+      },
+      "rule_hints": {
+        "show_current_phase_rules": true,
+        "show_time_remaining": true,
+        "show_special_rules": true,
+        "text_color": "#666666"
+      }
+    },
+    "control_panel": {
+      "game_controls": {
+        "show_start_button": true,
+        "show_pause_button": true,
+        "show_restart_button": true,
+        "show_exit_button": true,
+        "button_size": "medium"
+      },
+      "settings": {
+        "show_game_speed": true,
+        "show_voice_toggle": true,
+        "show_display_settings": true,
+        "remember_settings": true
+      }
+    },
+    "private_info": {
+      "night_actions": {
+        "show_to_target_role": true,
+        "hide_from_others": true,
+        "display_duration": 5000
+      },
+      "role_info": {
+        "show_special_abilities": true,
+        "show_role_goal": true,
+        "update_on_status_change": true
+      },
+      "wolf_info": {
+        "show_wolf_mates": true,
+        "show_wolf_actions": true,
+        "hide_from_non_wolves": true
+      }
+    }
+  },
+  "display_principles": {
+    "hide_ai_thinking": true,
+    "show_only_final_decisions": true,
+    "private_info_only_to_target": true,
+    "keep_full_history": true,
+    "highlight_important_events": true
+  },
+  "visual_settings": {
+    "theme": "default",
+    "dark_mode": false,
+    "animation_enabled": true,
+    "sound_enabled": true,
+    "font_family": "Arial",
+    "primary_color": "#4CAF50",
+    "secondary_color": "#2196F3",
+    "accent_color": "#FF9800",
+    "background_color": "#FFFFFF"
+  },
+  "responsive_design": {
+    "desktop": {
+      "min_width": 1024,
+      "layout": "full"
+    },
+    "tablet": {
+      "min_width": 768,
+      "max_width": 1023,
+      "layout": "compact"
+    },
+    "mobile": {
+      "max_width": 767,
+      "layout": "mobile"
+    }
+  },
+  "accessibility": {
+    "high_contrast_mode": false,
+    "text_to_speech": false,
+    "keyboard_navigation": true,
+    "screen_reader_support": false
+  }
+}

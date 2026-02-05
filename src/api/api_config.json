@@ -1,0 +1,142 @@
+{
+  "api_list": [
+    {
+      "id": 1,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 2,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 3,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 4,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 5,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 6,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 7,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 8,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 9,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 10,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 11,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    },
+    {
+      "id": 12,
+      "name": "",
+      "personality": "",
+      "strategy": "",
+      "enabled": false
+    }
+  ],
+  "interface_settings": {
+    "url": "",
+    "method": "POST",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "request_template": {
+      "messages": [
+        {
+          "role": "system",
+          "content": ""
+        },
+        {
+          "role": "user",
+          "content": ""
+        }
+      ]
+    },
+    "response_parsing": {
+      "content_path": "$.choices[0].message.content",
+      "error_path": "$.error.message"
+    }
+  },
+  "test_settings": {
+    "timeout": 30000,
+    "max_retries": 3,
+    "test_message": "测试连接"
+  },
+  "allocation_rules": {
+    "mode": "random",
+    "personality_mapping": {
+      "狼人": ["激进型", "表演型"],
+      "预言家": ["逻辑型", "谨慎型"],
+      "女巫": ["平衡型", "谨慎型"],
+      "猎人": ["激进型", "直觉型"],
+      "守卫": ["谨慎型", "平衡型"],
+      "平民": ["直觉型", "沉默型"]
+    }
+  },
+  "personality_options": [
+    "谨慎型",
+    "激进型",
+    "逻辑型",
+    "直觉型",
+    "表演型",
+    "沉默型"
+  ],
+  "strategy_options": [
+    "保守",
+    "进攻",
+    "平衡",
+    "随机",
+    "学习型"
+  ]
+}

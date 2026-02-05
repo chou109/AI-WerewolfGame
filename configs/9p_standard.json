@@ -1,0 +1,17 @@
+{
+  "player_count": 9,
+  "roles": [
+    {"role": "狼人", "count": 3, "api_slots": 3},
+    {"role": "平民", "count": 3, "api_slots": 3},
+    {"role": "预言家", "count": 1, "api_slots": 1},
+    {"role": "女巫", "count": 1, "api_slots": 1},
+    {"role": "猎人", "count": 1, "api_slots": 1}
+  ],
+  "rules": {
+    "game_mode": "经典模式",
+    "card_type": "暗牌",
+    "has_sheriff": true,
+    "last_words": "前两晚有遗言",
+    "special_rules": ["女巫不能自救"]
+  }
+}
