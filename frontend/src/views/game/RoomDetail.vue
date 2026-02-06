@@ -47,7 +47,7 @@ const players = ref([])
 const loading = ref(false)
 
 const canStartGame = computed(() => {
-  return room.status === 1 && room.playerCount === players.value.length
+  return room.status === 1 && room.playerCount === (players.value || []).length
 })
 
 onMounted(() => {

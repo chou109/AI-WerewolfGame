@@ -72,9 +72,12 @@ export const useGameStore = defineStore('game', {
         const response = await axios.get(`/game/player/list/${roomId}`)
         if (response.data.code === 200) {
           this.players = response.data.data
+          return response.data.data
         }
+        return []
       } catch (error) {
         console.error('Get players error:', error)
+        return []
       }
     },
     async addPlayerToRoom(roomId, userId, playerNumber) {

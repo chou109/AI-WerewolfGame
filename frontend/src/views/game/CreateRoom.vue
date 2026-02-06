@@ -64,7 +64,6 @@ const roomForm = reactive({
 })
 
 const aiPlayers = ref([])
-const loading = ref(false)
 
 const roomRules = {
   roomName: [
@@ -109,7 +108,7 @@ const cancel = () => {
 }
 
 const goToAiPlayerManager = () => {
-  router.push('/game/ai/players')
+  router.push('/api')
 }
 
 const fetchAiPlayers = async () => {

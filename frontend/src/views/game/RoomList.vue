@@ -17,6 +17,7 @@
         <div class="room-actions">
           <el-button type="primary" size="small" @click="joinRoom(room.id)">加入房间</el-button>
           <el-button type="info" size="small" @click="viewRoom(room.id)">查看详情</el-button>
+          <el-button type="danger" size="small" @click="deleteRoom(room.id)">删除房间</el-button>
         </div>
       </el-card>
     </div>
@@ -30,6 +31,8 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useGameStore } from '../../stores/game'
+import { ElMessage } from 'element-plus'
+import axios from 'axios'
 
 const router = useRouter()
 const gameStore = useGameStore()
@@ -64,6 +67,21 @@ const viewRoom = (roomId) => {
 
 const goToCreateRoom = () => {
   router.push('/game/room/create')
+}
+
+const deleteRoom = async (roomId) => {
+  try {
+    const response = await axios.delete(`/game/room/delete/${roomId}`)
+    if (response.data.code === 200) {
+      ElMessage.success('房间删除成功')
+      fetchRooms()
+    } else {
+      ElMessage.error(response.data.message || '房间删除失败')
+    }
+  } catch (error) {
+    console.error('Delete room error:', error)
+    ElMessage.error('房间删除失败')
+  }
 }
 </script>
 

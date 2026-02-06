@@ -38,4 +38,9 @@ public interface GameRoomService extends IService<GameRoom> {
      * 结束游戏
      */
     boolean endGame(Long roomId, String winner);
+
+    /**
+     * 删除房间
+     */
+    boolean deleteRoom(Long roomId);
 }

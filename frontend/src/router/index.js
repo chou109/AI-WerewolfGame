@@ -2,11 +2,6 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 const routes = [
   {
-    path: '/',
-    name: 'Home',
-    component: () => import('../views/Home.vue')
-  },
-  {
     path: '/login',
     name: 'Login',
     component: () => import('../views/Login.vue')
@@ -17,51 +12,55 @@ const routes = [
     component: () => import('../views/Register.vue')
   },
   {
-    path: '/game',
-    name: 'Game',
-    component: () => import('../views/Game.vue'),
+    path: '/',
+    component: () => import('../components/Layout.vue'),
     children: [
       {
-        path: 'room/list',
+        path: '',
+        name: 'Home',
+        component: () => import('../views/Home.vue')
+      },
+      {
+        path: 'game/room/list',
         name: 'RoomList',
         component: () => import('../views/game/RoomList.vue')
       },
       {
-        path: 'room/create',
+        path: 'game/room/create',
         name: 'CreateRoom',
         component: () => import('../views/game/CreateRoom.vue')
       },
       {
-        path: 'room/:id',
+        path: 'game/room/:id',
         name: 'RoomDetail',
         component: () => import('../views/game/RoomDetail.vue')
       },
       {
-        path: 'play/:roomId',
+        path: 'game/play/:roomId',
         name: 'GamePlay',
         component: () => import('../views/game/GamePlay.vue')
       },
       {
-        path: 'ai/players',
-        name: 'AiPlayerManager',
-        component: () => import('../views/game/AiPlayerManager.vue')
+        path: 'api',
+        name: 'ApiConfig',
+        component: () => import('../views/ApiConfig.vue')
+      },
+      {
+        path: 'voice',
+        name: 'VoiceConfig',
+        component: () => import('../views/VoiceConfig.vue')
+      },
+      {
+        path: 'ai-dialog-test',
+        name: 'AIDialogTest',
+        component: () => import('../views/AIDialogTest.vue')
+      },
+      {
+        path: 'records',
+        name: 'GameRecords',
+        component: () => import('../views/GameRecords.vue')
       }
     ]
-  },
-  {
-    path: '/api',
-    name: 'ApiConfig',
-    component: () => import('../views/ApiConfig.vue')
-  },
-  {
-    path: '/voice',
-    name: 'VoiceConfig',
-    component: () => import('../views/VoiceConfig.vue')
-  },
-  {
-    path: '/records',
-    name: 'GameRecords',
-    component: () => import('../views/GameRecords.vue')
   }
 ]
 

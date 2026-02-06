@@ -105,4 +105,17 @@ public class GameRoomController {
             return Map.of("code", 400, "message", "操作失败");
         }
     }
+
+    /**
+     * 删除房间
+     */
+    @DeleteMapping("/delete/{id}")
+    public Map<String, Object> deleteRoom(@PathVariable Long id) {
+        boolean result = gameRoomService.deleteRoom(id);
+        if (result) {
+            return Map.of("code", 200, "message", "房间删除成功");
+        } else {
+            return Map.of("code", 400, "message", "房间删除失败");
+        }
+    }
 }

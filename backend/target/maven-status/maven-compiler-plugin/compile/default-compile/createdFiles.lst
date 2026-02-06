@@ -16,6 +16,7 @@ com\werewolf\game\entity\GameRecord.class
 com\werewolf\game\service\GameRoomService.class
 com\werewolf\game\service\impl\GamePlayerServiceImpl.class
 com\werewolf\game\mapper\UserMapper.class
+com\werewolf\game\config\DatabaseInitializer.class
 com\werewolf\game\controller\UserController.class
 com\werewolf\game\entity\GamePlayer.class
 com\werewolf\game\entity\GameRoom.class

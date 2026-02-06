@@ -7,9 +7,10 @@
         </div>
         <div class="nav">
           <el-menu :default-active="activeIndex" class="el-menu-demo" mode="horizontal" @select="handleSelect">
+            <el-menu-item index="home">首页</el-menu-item>
             <el-menu-item index="roomList">房间列表</el-menu-item>
             <el-menu-item index="createRoom">创建房间</el-menu-item>
-            <el-menu-item index="apiConfig">API配置</el-menu-item>
+            <el-menu-item index="apiConfig">AI玩家管理</el-menu-item>
             <el-menu-item index="voiceConfig">语音配置</el-menu-item>
             <el-menu-item index="gameRecords">游戏记录</el-menu-item>
           </el-menu>
@@ -34,6 +35,13 @@
       </div>
     </el-header>
     <el-main>
+      <!-- 面包屑导航 -->
+      <el-breadcrumb class="breadcrumb" separator="/">
+        <el-breadcrumb-item v-for="item in breadcrumbItems" :key="item.path" :to="item.path">
+          {{ item.title }}
+        </el-breadcrumb-item>
+      </el-breadcrumb>
+      
       <router-view />
     </el-main>
     <el-footer>
@@ -46,34 +54,80 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
-const activeIndex = ref('roomList')
+const activeIndex = ref('home')
+
+// 面包屑导航配置
+const breadcrumbItems = computed(() => {
+  const path = route.path
+  const items = []
+  
+  // 添加首页
+  items.push({ title: '首页', path: '/' })
+  
+  // 根据当前路径添加面包屑
+  if (path.includes('/game/room/list')) {
+    items.push({ title: '游戏管理', path: '/game/room/list' })
+    items.push({ title: '房间列表', path: '/game/room/list' })
+  } else if (path.includes('/game/room/create')) {
+    items.push({ title: '游戏管理', path: '/game/room/list' })
+    items.push({ title: '创建房间', path: '/game/room/create' })
+  } else if (path.includes('/game/room/')) {
+    items.push({ title: '游戏管理', path: '/game/room/list' })
+    items.push({ title: '房间详情', path: path })
+  } else if (path.includes('/game/play/')) {
+    items.push({ title: '游戏管理', path: '/game/room/list' })
+    items.push({ title: '游戏中', path: path })
+  } else if (path.includes('/api')) {
+    items.push({ title: 'AI玩家管理', path: '/api' })
+  } else if (path.includes('/voice')) {
+    items.push({ title: '语音配置', path: '/voice' })
+  } else if (path.includes('/records')) {
+    items.push({ title: '游戏记录', path: '/records' })
+  }
+  
+  return items
+})
 
 onMounted(() => {
   userStore.loadUserInfo()
   updateActiveIndex()
 })
 
+// 监听路由变化更新激活的菜单项
+watch(() => route.path, () => {
+  updateActiveIndex()
+})
+
 const updateActiveIndex = () => {
   const path = route.path
-  if (path.includes('room/list')) {
+  if (path === '/') {
+    activeIndex.value = 'home'
+  } else if (path.includes('room/list')) {
     activeIndex.value = 'roomList'
   } else if (path.includes('room/create')) {
     activeIndex.value = 'createRoom'
   } else if (path.includes('/api')) {
     activeIndex.value = 'apiConfig'
+  } else if (path.includes('/voice')) {
+    activeIndex.value = 'voiceConfig'
+  } else if (path.includes('/records')) {
+    activeIndex.value = 'gameRecords'
   }
 }
 
 const handleSelect = (key) => {
   activeIndex.value = key
   switch (key) {
+    case 'home':
+      router.push('/')
+      break
     case 'roomList':
       router.push('/game/room/list')
       break
@@ -130,6 +184,10 @@ const logout = () => {
   color: #fff;
   cursor: pointer;
   margin-right: 10px;
+}
+
+.breadcrumb {
+  margin-bottom: 20px;
 }
 
 .footer-content {

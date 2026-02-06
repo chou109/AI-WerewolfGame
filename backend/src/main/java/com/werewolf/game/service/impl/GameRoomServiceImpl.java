@@ -71,6 +71,11 @@ public class GameRoomServiceImpl extends ServiceImpl<GameRoomMapper, GameRoom> i
         return false;
     }
 
+    @Override
+    public boolean deleteRoom(Long roomId) {
+        return removeById(roomId);
+    }
+
     /**
      * 生成6位随机房间号
      */
