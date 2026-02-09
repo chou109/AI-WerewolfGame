@@ -100,6 +100,82 @@ const fetchAiPlayers = async () => {
   }
 }
 
+// 清理API密钥函数
+const cleanApiKey = (apiKey) => {
+  let cleanedKey = apiKey || ''
+  // 移除反引号
+  cleanedKey = cleanedKey.replace(/`/g, '')
+  // 移除多余空格
+  cleanedKey = cleanedKey.trim()
+  // 移除首尾的引号
+  cleanedKey = cleanedKey.replace(/^['"]|['"]$/g, '')
+  return cleanedKey
+}
+
+// API配置验证方法
+const validateApiConfig = (aiPlayer) => {
+  const apiUrl = aiPlayer.apiBaseUrl || ''
+  const apiKey = aiPlayer.apiKey || ''
+  
+  // URL格式检查
+  let finalApiUrl = apiUrl
+  if (!finalApiUrl.startsWith('http')) {
+    finalApiUrl = 'https://' + finalApiUrl
+  }
+  if (finalApiUrl.endsWith('/')) {
+    finalApiUrl = finalApiUrl.substring(0, finalApiUrl.length - 1)
+  }
+  
+  // 清理API密钥
+  const cleanedApiKey = cleanApiKey(apiKey)
+  
+  // 完整请求URL构建
+  let fullUrl = finalApiUrl
+  
+  // 根据模型类型和API URL选择正确的端点
+  if (finalApiUrl.includes('modelscope.cn')) {
+    // ModelScope API特殊处理
+    if (finalApiUrl.includes('/v1')) {
+      // OpenAI风格API
+      fullUrl += '/chat/completions'
+    } else {
+      // 基础API
+      fullUrl += '/v1/chat/completions'
+    }
+  } else if (aiPlayer.modelType === 'modelscope' || aiPlayer.modelType === 'deepseek' || aiPlayer.modelType === 'qwen' || aiPlayer.modelType === 'glm' || aiPlayer.modelType === 'moonshot') {
+    // 相关模型类型
+    fullUrl += '/chat/completions'
+  } else if (aiPlayer.modelType === 'openai' || aiPlayer.modelType === 'gpt') {
+    // OpenAI请求体
+    fullUrl += '/chat/completions'
+  } else if (aiPlayer.modelType === 'claude' || aiPlayer.modelType === 'anthropic') {
+    // Anthropic请求体
+    fullUrl += '/messages'
+  } else {
+    // 默认端点
+    fullUrl += '/chat/completions'
+  }
+  
+  // 认证方式设置
+  const headers = {
+    'Content-Type': 'application/json'
+  }
+  
+  if (finalApiUrl.includes('modelscope.cn') || aiPlayer.modelType === 'modelscope' || aiPlayer.modelType === 'deepseek' || aiPlayer.modelType === 'qwen' || aiPlayer.modelType === 'glm' || aiPlayer.modelType === 'moonshot') {
+    headers['Authorization'] = `Bearer ${cleanedApiKey}`
+  } else if (aiPlayer.modelType === 'claude' || aiPlayer.modelType === 'anthropic') {
+    headers['x-api-key'] = cleanedApiKey
+  } else {
+    headers['Authorization'] = `Bearer ${cleanedApiKey}`
+  }
+  
+  return {
+    fullUrl,
+    headers,
+    isValid: true
+  }
+}
+
 // 发送消息
 const sendMessage = async () => {
   if (!selectedAiPlayer.value) {
@@ -126,113 +202,22 @@ const sendMessage = async () => {
 
   sending.value = true
   try {
-    // 构建API请求
     const aiPlayer = selectedAiPlayer.value
-    const apiUrl = aiPlayer.apiBaseUrl || ''
-    let apiKey = aiPlayer.apiKey || ''
-    const modelName = aiPlayer.modelName || ''
-
-    if (!apiUrl || !apiKey || !modelName) {
-      throw new Error('AI玩家配置不完整，缺少API信息')
-    }
-
-    // 特殊检查：ModelScope API
-    if (apiUrl.includes('modelscope.cn')) {
-      console.log('ModelScope API 检查:', {
-        apiKeyLength: apiKey.length,
-        apiKeyStartsWith: apiKey.substring(0, 10) + '...',
-        apiUrl: apiUrl
-      })
-      
-      // 检查API Key格式
-      if (!apiKey || apiKey.length < 20) {
-        throw new Error('ModelScope API Key 格式不正确，长度至少为20个字符')
-      }
-      
-      // 自动处理API密钥格式：去除ms-前缀
-      if (apiKey.startsWith('ms-')) {
-        apiKey = apiKey.substring(3)
-        console.log('自动去除API密钥中的ms-前缀')
-        console.log('处理后的API密钥:', apiKey.substring(0, 10) + '...')
-      }
-      
-      // 检查API端点
-      if (!apiUrl.includes('api-inference.modelscope.cn')) {
-        console.warn('提示：推荐使用 api-inference.modelscope.cn 端点以获得更好的兼容性')
-      }
-    }
-
-    // 确保API URL格式正确
-    let finalApiUrl = apiUrl.trim()
-    if (!finalApiUrl.startsWith('http')) {
-      finalApiUrl = 'https://' + finalApiUrl
-    }
-    // 统一处理：不要添加结尾斜杠，保持与SDK示例一致
-    if (finalApiUrl.endsWith('/')) {
-      finalApiUrl = finalApiUrl.substring(0, finalApiUrl.length - 1)
+    
+    // 使用API配置验证方法
+    const apiConfig = validateApiConfig(aiPlayer)
+    
+    if (!apiConfig.isValid) {
+      throw new Error('API配置验证失败')
     }
     
-    // 自动修正ModelScope API端点（在添加端点路径之前）
-    if (finalApiUrl.includes('modelscope.cn')) {
-      if (!finalApiUrl.includes('api-inference.modelscope.cn')) {
-        console.log('当前ModelScope API Base URL:', finalApiUrl)
-        console.log('提示：如果遇到401错误，请检查API Key是否正确')
-      } else {
-        console.log('当前ModelScope API Base URL:', finalApiUrl)
-        console.log('提示：api-inference.modelscope.cn 是推荐的端点，兼容性更好')
-      }
-    }
-    
-    // 根据API类型设置不同的认证方式
-    const headers = {
-      'Content-Type': 'application/json'
-    }
-    
-    // 处理不同类型的API认证
-    if (aiPlayer.modelType === 'modelscope' || aiPlayer.modelType === 'deepseek' || aiPlayer.modelType === 'qwen' || aiPlayer.modelType === 'glm' || aiPlayer.modelType === 'moonshot') {
-      // ModelScope 及相关模型认证方式
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else if (aiPlayer.modelType === 'openai' || aiPlayer.modelType === 'gpt') {
-      // OpenAI 认证方式
-      headers['Authorization'] = `Bearer ${apiKey}`
-    } else if (aiPlayer.modelType === 'claude' || aiPlayer.modelType === 'anthropic') {
-      // Anthropic 认证方式
-      headers['x-api-key'] = apiKey
-    } else {
-      // 默认认证方式
-      headers['Authorization'] = `Bearer ${apiKey}`
-    }
-
-    // 根据API类型设置正确的端点
-    if (aiPlayer.modelType === 'modelscope' || aiPlayer.modelType === 'deepseek' || aiPlayer.modelType === 'qwen' || aiPlayer.modelType === 'glm' || aiPlayer.modelType === 'moonshot') {
-      // ModelScope 及相关模型端点
-      finalApiUrl += '/chat/completions'
-      console.log('添加端点路径后的完整API URL:', finalApiUrl)
-    } else if (aiPlayer.modelType === 'openai' || aiPlayer.modelType === 'gpt') {
-      // OpenAI 端点
-      finalApiUrl += '/chat/completions'
-    } else if (aiPlayer.modelType === 'claude' || aiPlayer.modelType === 'anthropic') {
-      // Anthropic 端点
-      finalApiUrl += '/messages'
-    } else {
-      // 默认端点
-      finalApiUrl += '/chat/completions'
-    }
-    
-    console.log('API请求信息:', {
-      modelType: aiPlayer.modelType,
-      apiUrl: finalApiUrl,
-      modelName: modelName,
-      headers: headers
-    })
-
     // 构建请求体
     let requestBody = {}
     
-    if (aiPlayer.modelType === 'modelscope') {
-      // ModelScope 请求体
+    if (aiPlayer.modelType === 'modelscope' || aiPlayer.modelType === 'deepseek' || aiPlayer.modelType === 'qwen' || aiPlayer.modelType === 'glm' || aiPlayer.modelType === 'moonshot') {
+      // ModelScope 及相关模型请求体
       requestBody = {
-        model: modelName,
+        model: aiPlayer.modelName,
         messages: [
           {
             role: 'system',
@@ -249,7 +234,7 @@ const sendMessage = async () => {
     } else if (aiPlayer.modelType === 'openai' || aiPlayer.modelType === 'gpt') {
       // OpenAI 请求体
       requestBody = {
-        model: modelName,
+        model: aiPlayer.modelName,
         messages: [
           {
             role: 'system',
@@ -266,7 +251,7 @@ const sendMessage = async () => {
     } else if (aiPlayer.modelType === 'claude' || aiPlayer.modelType === 'anthropic') {
       // Anthropic 请求体
       requestBody = {
-        model: modelName,
+        model: aiPlayer.modelName,
         messages: [
           {
             role: 'user',
@@ -279,7 +264,7 @@ const sendMessage = async () => {
     } else {
       // 默认请求体
       requestBody = {
-        model: modelName,
+        model: aiPlayer.modelName,
         messages: [
           {
             role: 'system',
@@ -295,33 +280,14 @@ const sendMessage = async () => {
       }
     }
     
-    console.log('API请求体:', requestBody)
-    
-    const response = await axios.post(finalApiUrl, requestBody, {
-      headers,
-      timeout: 30000 // 30秒超时
+    const response = await axios.post(apiConfig.fullUrl, requestBody, {
+      headers: apiConfig.headers,
+      timeout: 30000
     })
 
-    console.log('API响应:', response.data)
-
     // 处理响应
-    if (aiPlayer.modelType === 'modelscope') {
-      // ModelScope 响应处理
-      if (response.data && response.data.choices && response.data.choices.length > 0) {
-        const aiResponse = response.data.choices[0].message
-        if (aiResponse && aiResponse.content) {
-          // 添加AI回复到历史
-          dialogHistory.value.push({
-            role: 'assistant',
-            content: aiResponse.content.trim(),
-            time: new Date().toLocaleString()
-          })
-        }
-      } else {
-        throw new Error('AI响应格式不正确')
-      }
-    } else if (aiPlayer.modelType === 'openai' || aiPlayer.modelType === 'gpt') {
-      // OpenAI 响应处理
+    if (aiPlayer.modelType === 'modelscope' || aiPlayer.modelType === 'deepseek' || aiPlayer.modelType === 'qwen' || aiPlayer.modelType === 'glm' || aiPlayer.modelType === 'moonshot' || aiPlayer.modelType === 'openai' || aiPlayer.modelType === 'gpt') {
+      // ModelScope、DeepSeek、Qwen、GLM、Moonshot、OpenAI 响应处理
       if (response.data && response.data.choices && response.data.choices.length > 0) {
         const aiResponse = response.data.choices[0].message
         if (aiResponse && aiResponse.content) {
@@ -367,18 +333,6 @@ const sendMessage = async () => {
       }
     }
   } catch (error) {
-    console.error('Send message error:', error)
-    console.error('Error details:', {
-      status: error.response?.status,
-      statusText: error.response?.statusText,
-      data: error.response?.data,
-      config: {
-        url: error.config?.url,
-        method: error.config?.method,
-        headers: error.config?.headers
-      }
-    })
-    
     let errorMessage = '发送消息失败'
     if (error.response?.status === 401) {
       errorMessage = '认证失败：API Key 可能错误或已过期\n\n请检查：\n1. API Key是否正确复制\n2. API Key是否已过期\n3. 是否有该模型的访问权限\n4. API Key是否启用了对应模型的访问'

@@ -284,12 +284,21 @@ const saveAiPlayer = async () => {
     if (valid) {
       loading.value = true
       try {
-        // 自动处理ModelScope API密钥格式：去除ms-前缀
         let formData = { ...aiPlayerForm }
-        if (formData.modelType === 'modelscope' && formData.apiKey && formData.apiKey.startsWith('ms-')) {
-          formData.apiKey = formData.apiKey.substring(3)
-          console.log('自动去除ModelScope API密钥中的ms-前缀')
+        
+        // 清理API密钥和URL中的特殊字符
+        if (formData.apiKey) {
+          formData.apiKey = formData.apiKey.replace(/`/g, '').trim()
         }
+        if (formData.apiBaseUrl) {
+          formData.apiBaseUrl = formData.apiBaseUrl.replace(/`/g, '').trim()
+        }
+        
+        console.log('保存AI玩家配置:', {
+          name: formData.name,
+          apiKey: formData.apiKey.substring(0, 15) + '...',
+          apiBaseUrl: formData.apiBaseUrl
+        })
         
         let response
         if (aiPlayerForm.id) {

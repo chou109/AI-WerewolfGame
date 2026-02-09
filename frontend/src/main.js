@@ -15,7 +15,8 @@ axios.defaults.headers.common['Content-Type'] = 'application/json'
 axios.interceptors.request.use(
   config => {
     const token = localStorage.getItem('token')
-    if (token) {
+    // 只有在没有设置Authorization头的情况下才设置
+    if (token && !config.headers.Authorization) {
       config.headers.Authorization = token
     }
     return config
