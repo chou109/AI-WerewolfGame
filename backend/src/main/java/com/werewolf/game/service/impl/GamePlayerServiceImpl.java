@@ -1,5 +1,6 @@
 package com.werewolf.game.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.werewolf.game.entity.GamePlayer;
 import com.werewolf.game.mapper.GamePlayerMapper;
@@ -17,7 +18,11 @@ public class GamePlayerServiceImpl extends ServiceImpl<GamePlayerMapper, GamePla
 
     @Override
     public List<GamePlayer> getPlayersByRoomId(Long roomId) {
-        return lambdaQuery().eq(GamePlayer::getRoomId, roomId).list();
+        // 使用BaseMapper的selectList方法来查询
+        QueryWrapper<GamePlayer> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("room_id", roomId);
+        queryWrapper.eq("status", 1); // 只查询status=1的玩家（即未被删除的玩家）
+        return baseMapper.selectList(queryWrapper);
     }
 
     @Override
@@ -30,9 +35,16 @@ public class GamePlayerServiceImpl extends ServiceImpl<GamePlayerMapper, GamePla
 
     @Override
     public GamePlayer addPlayerToRoom(Long roomId, Long userId, Integer playerNumber) {
+        return addPlayerToRoom(roomId, userId, playerNumber, null, null);
+    }
+
+    @Override
+    public GamePlayer addPlayerToRoom(Long roomId, Long userId, Integer playerNumber, Long aiPlayerId, String playerName) {
         GamePlayer player = new GamePlayer();
         player.setRoomId(roomId);
         player.setUserId(userId);
+        player.setAiPlayerId(aiPlayerId);
+        player.setPlayerName(playerName);
         player.setPlayerNumber(playerNumber);
         player.setStatus(1); // 1-存活
         player.setIsSheriff(0); // 0-不是警长
@@ -67,7 +79,10 @@ public class GamePlayerServiceImpl extends ServiceImpl<GamePlayerMapper, GamePla
     @Override
     public boolean setSheriff(Long roomId, Long playerId) {
         // 先将所有玩家的警长状态重置
-        lambdaUpdate().eq(GamePlayer::getRoomId, roomId).set(GamePlayer::getIsSheriff, 0).update();
+        lambdaUpdate()
+                .eq(GamePlayer::getRoomId, roomId)
+                .set(GamePlayer::getIsSheriff, 0)
+                .update();
         // 设置新的警长
         GamePlayer player = getById(playerId);
         if (player != null) {
@@ -82,7 +97,18 @@ public class GamePlayerServiceImpl extends ServiceImpl<GamePlayerMapper, GamePla
     public List<GamePlayer> getAlivePlayersByRoomId(Long roomId) {
         return lambdaQuery()
                 .eq(GamePlayer::getRoomId, roomId)
-                .eq(GamePlayer::getStatus, 1)
+                .eq(GamePlayer::getStatus, 1) // 假设status=1表示存活
                 .list();
+    }
+    
+    @Override
+    public boolean removePlayerFromRoom(Long roomId, Long playerId) {
+        GamePlayer player = getById(playerId);
+        if (player != null && player.getRoomId().equals(roomId)) {
+            player.setStatus(0); // 假设status=0表示已移除
+            player.setUpdateTime(LocalDateTime.now());
+            return updateById(player);
+        }
+        return false;
     }
 }

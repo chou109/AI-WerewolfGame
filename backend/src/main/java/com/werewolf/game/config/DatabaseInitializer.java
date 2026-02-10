@@ -23,6 +23,13 @@ public class DatabaseInitializer {
     public ApplicationRunner initDatabase() {
         return args -> {
             try (Connection connection = dataSource.getConnection()) {
+                // 执行创建表脚本
+                ClassPathResource createTablesScript = new ClassPathResource("sql/create_tables.sql");
+                if (createTablesScript.exists()) {
+                    ScriptUtils.executeSqlScript(connection, createTablesScript);
+                    System.out.println("数据库创建表脚本执行成功");
+                }
+                
                 // 执行初始化脚本
                 ClassPathResource initScript = new ClassPathResource("sql/init.sql");
                 if (initScript.exists()) {

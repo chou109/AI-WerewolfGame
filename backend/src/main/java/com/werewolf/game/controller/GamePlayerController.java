@@ -48,7 +48,12 @@ public class GamePlayerController {
         Long roomId = Long.parseLong(params.get("roomId").toString());
         Long userId = Long.parseLong(params.get("userId").toString());
         Integer playerNumber = Integer.parseInt(params.get("playerNumber").toString());
-        GamePlayer player = gamePlayerService.addPlayerToRoom(roomId, userId, playerNumber);
+        
+        // 获取AI玩家ID和玩家名称（如果有）
+        Long aiPlayerId = params.containsKey("aiPlayerId") && params.get("aiPlayerId") != null ? Long.parseLong(params.get("aiPlayerId").toString()) : null;
+        String playerName = params.containsKey("playerName") ? params.get("playerName").toString() : null;
+        
+        GamePlayer player = gamePlayerService.addPlayerToRoom(roomId, userId, playerNumber, aiPlayerId, playerName);
         return Map.of("code", 200, "message", "加入房间成功", "data", player);
     }
 
@@ -104,5 +109,20 @@ public class GamePlayerController {
     public Map<String, Object> getAlivePlayers(@PathVariable Long roomId) {
         List<GamePlayer> players = gamePlayerService.getAlivePlayersByRoomId(roomId);
         return Map.of("code", 200, "data", players);
+    }
+    
+    /**
+     * 从房间移除玩家
+     */
+    @PostMapping("/remove")
+    public Map<String, Object> removePlayerFromRoom(@RequestBody Map<String, Object> params) {
+        Long roomId = Long.parseLong(params.get("roomId").toString());
+        Long playerId = Long.parseLong(params.get("playerId").toString());
+        boolean result = gamePlayerService.removePlayerFromRoom(roomId, playerId);
+        if (result) {
+            return Map.of("code", 200, "message", "玩家移除成功");
+        } else {
+            return Map.of("code", 400, "message", "玩家移除失败");
+        }
     }
 }

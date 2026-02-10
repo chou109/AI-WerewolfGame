@@ -23,6 +23,11 @@ public interface GamePlayerService extends IService<GamePlayer> {
      * 添加玩家到房间
      */
     GamePlayer addPlayerToRoom(Long roomId, Long userId, Integer playerNumber);
+    
+    /**
+     * 添加玩家到房间（包含AI玩家信息）
+     */
+    GamePlayer addPlayerToRoom(Long roomId, Long userId, Integer playerNumber, Long aiPlayerId, String playerName);
 
     /**
      * 更新玩家状态
@@ -43,4 +48,9 @@ public interface GamePlayerService extends IService<GamePlayer> {
      * 获取房间内存活的玩家
      */
     List<GamePlayer> getAlivePlayersByRoomId(Long roomId);
+    
+    /**
+     * 从房间移除玩家
+     */
+    boolean removePlayerFromRoom(Long roomId, Long playerId);
 }

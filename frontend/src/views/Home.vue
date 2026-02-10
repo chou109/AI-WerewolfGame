@@ -82,8 +82,38 @@
             <span class="player-count">12人</span>
           </div>
           <div class="mode-content">
-            <p>配置：4狼人、4平民、1预言家、1女巫、1守卫、1奇迹商人</p>
+            <p>配置：3狼人、1狼王、4平民、1预言家、1女巫、1守卫、1奇迹商人</p>
             <el-button type="primary" size="small" @click="createRoom(12, 'miracle_merchant')">创建房间</el-button>
+          </div>
+        </el-card>
+        <el-card class="mode-card">
+          <div class="mode-header">
+            <h4>12人狼美人骑士场</h4>
+            <span class="player-count">12人</span>
+          </div>
+          <div class="mode-content">
+            <p>配置：3狼人、1狼美人、4平民、1预言家、1女巫、1骑士、1守卫</p>
+            <el-button type="primary" size="small" @click="createRoom(12, 'wolf_beauty_knight')">创建房间</el-button>
+          </div>
+        </el-card>
+        <el-card class="mode-card">
+          <div class="mode-header">
+            <h4>12人白狼王骑士场</h4>
+            <span class="player-count">12人</span>
+          </div>
+          <div class="mode-content">
+            <p>配置：3狼人、1白狼王、4平民、1预言家、1女巫、1骑士、1守卫</p>
+            <el-button type="primary" size="small" @click="createRoom(12, 'white_wolf_knight')">创建房间</el-button>
+          </div>
+        </el-card>
+        <el-card class="mode-card">
+          <div class="mode-header">
+            <h4>12人石像鬼守墓人场</h4>
+            <span class="player-count">12人</span>
+          </div>
+          <div class="mode-content">
+            <p>配置：3狼人、1石像鬼、4平民、1预言家、1女巫、1守墓人、1猎人</p>
+            <el-button type="primary" size="small" @click="createRoom(12, 'gargoyle_gravedigger')">创建房间</el-button>
           </div>
         </el-card>
       </div>

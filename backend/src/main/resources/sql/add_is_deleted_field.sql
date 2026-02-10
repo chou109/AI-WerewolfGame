@@ -1,0 +1,1 @@
+ALTER TABLE game_player ADD COLUMN is_deleted INT(11) DEFAULT 0;

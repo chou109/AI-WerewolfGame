@@ -14,8 +14,11 @@
       <el-form-item label="游戏板子" prop="gameBoard">
         <el-select v-model="roomForm.gameBoard" placeholder="请选择游戏板子">
           <el-option label="标准场" value="standard" />
-          <el-option label="狼王守卫场" value="wolfking_guard" />
           <el-option label="奇迹商人场" value="miracle_merchant" />
+          <el-option label="狼王守卫场" value="wolfking_guard" />
+          <el-option label="狼美人骑士场" value="wolf_beauty_knight" />
+          <el-option label="白狼王骑士场" value="white_wolf_knight" />
+          <el-option label="石像鬼守墓人场" value="gargoyle_gravedigger" />
         </el-select>
       </el-form-item>
       <el-form-item label="房间密码" prop="password">
@@ -95,7 +98,7 @@ const createRoom = async () => {
       loading.value = false
       if (success) {
         ElMessage.success('房间创建成功')
-        router.push(`/game/room/${gameStore.getCurrentRoom.id}`)
+        router.push(`/game/room/${gameStore.getCurrentRoom.id}?playerCount=${roomForm.playerCount}&gameBoard=${roomForm.gameBoard}`)
       } else {
         ElMessage.error('房间创建失败')
       }
