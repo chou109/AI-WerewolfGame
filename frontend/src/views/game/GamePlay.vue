@@ -256,6 +256,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import { useTypewriter } from '../../composables/useTypewriter.js'
 import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from '../../composables/useSpeechSynthesis.js'
+import { PACK_WOLF_ROLES, WEREWOLF_KNOWLEDGE, WOLF_TEAM_ROLES, getBoardRules, getRoleSummary, isPackWolfRole, isWolfTeamRole } from '../../game/rules.js'
 
 const { proxy } = getCurrentInstance()
 const $t = proxy.$t
@@ -276,6 +277,13 @@ function createEmptyNightState() {
     wolfTieCandidates: [],
     witchSaved: false,
     witchPoisonTargetId: null,
+    miraclePoisonTargetId: null,
+    miracleGuardTargetId: null,
+    miracleSkillTargetId: null,
+    wolfBeautyTargetId: null,
+    gargoyleTargetId: null,
+    gargoyleResult: null,
+    gravediggerResult: null,
     seerTargetId: null,
     seerResult: null,
     deaths: [],
@@ -315,6 +323,13 @@ const showScrollToBottom = ref(false)
 const lastPublicNightReport = ref('')
 const lastGuardTargetId = ref(null)
 const voteHistory = ref([])
+const sheriffDirection = ref('clockwise')
+const sheriffElectionDone = ref(false)
+const lastExiledPlayerId = ref(null)
+const lastWordsGiven = ref(false)
+const dayInterrupted = ref(false)
+const miracleMerchantState = reactive({ used: false, merchantId: null, luckyId: null, skill: null, pendingDeath: false })
+const wolfBeautyState = reactive({ previousTargetId: null, targetId: null })
 const lastApiRequestTime = ref(0)
 const API_REQUEST_INTERVAL = 1200
 const aiConfigCache = new Map()
@@ -332,6 +347,8 @@ let activeSpeechTimer = null
 let speechPausedByGame = false
 let pauseWaiters = []
 let hunterSkillUsed = new Set()
+let wolfKingSkillUsed = new Set()
+let knightSkillUsed = new Set()
 
 const SPEEDS = { slow: 80, normal: 50, fast: 30 }
 const SPEECH_LIMIT_SECONDS = 120
@@ -344,22 +361,35 @@ setSpeed(typewriterSpeed.value)
 
 // Computed
 const alivePlayers = computed(() => players.value.filter(p => p.isAlive))
-const wolfRolesArr = ['狼人','狼王','狼美人','白狼王','石像鬼','Werewolf','Wolf King','Wolf Beauty','White Wolf','Gargoyle']
+const wolfRolesArr = WOLF_TEAM_ROLES
+const boardRules = computed(() => getBoardRules(roomInfo.value.gameBoard || route.query.gameBoard, roomInfo.value.playerCount || 12))
 const roleAliases = {
   guard: ['守卫', 'Guard'],
   witch: ['女巫', 'Witch'],
   seer: ['预言家', 'Seer'],
-  hunter: ['猎人', 'Hunter']
+  hunter: ['猎人', 'Hunter'],
+  wolfKing: ['狼王'],
+  whiteWolf: ['白狼王'],
+  wolfBeauty: ['狼美人'],
+  miracle: ['奇迹商人'],
+  gargoyle: ['石像鬼'],
+  gravedigger: ['守墓人'],
+  knight: ['骑士']
 }
 const phaseLabel = computed(() => {
   const zh = currentLocale() === 'zh-CN'
   const m = {
     night: zh ? '夜间准备' : 'Night setup',
+    night_miracle: zh ? '奇迹商人行动' : 'Merchant action',
+    night_gargoyle: zh ? '石像鬼查验' : 'Gargoyle check',
+    night_gravedigger: zh ? '守墓人行动' : 'Gravedigger action',
     night_guard: zh ? '守卫行动' : 'Guard action',
     night_wolf: zh ? '狼人行动' : 'Wolf action',
+    night_wolf_beauty: zh ? '狼美人行动' : 'Wolf Beauty action',
     night_witch: zh ? '女巫行动' : 'Witch action',
     night_seer: zh ? '预言家行动' : 'Seer action',
     day: $t('gamePlay.dayPhase'),
+    sheriff: zh ? '警长竞选' : 'Sheriff election',
     speak: $t('gamePlay.speakPhase'),
     vote: $t('gamePlay.votePhase')
   }
@@ -395,7 +425,7 @@ const filteredDialogMessages = computed(() => {
       const visibility = m.visibility || 'public'
       if (visibility === 'public') return true
       if (visibility === 'private') return m.privateFor === sp.id
-      if (visibility === 'wolves') return wolfRolesArr.includes(sp.role)
+      if (visibility === 'wolves') return isPackWolf(sp)
       return visibility === 'god' ? false : m.sender === sp.playerName
     })
   }
@@ -408,7 +438,7 @@ const canSpeak = computed(() => {
   }
   if (currentPhase.value === 'night' && selectedPlayerId.value) {
     const sp = players.value.find(p => p.id === selectedPlayerId.value)
-    return sp && wolfRolesArr.includes(sp.role)
+    return sp && isPackWolf(sp)
   }
   return false
 })
@@ -449,6 +479,9 @@ const currentLocale = () => ($locale?.value || $locale) === 'en-US' ? 'en-US' : 
 const getPlayerNumberById = (pid) => players.value.find(p => p.id === pid)?.playerNumber || '?'
 const canViewRole = (player) => currentViewMode.value === 'god' || (currentViewMode.value === 'player' && selectedPlayerId.value === player.id)
 const hasRole = (player, key) => roleAliases[key]?.includes(player?.role)
+const isWolfRole = player => isWolfTeamRole(player?.role)
+const isPackWolf = player => isPackWolfRole(player?.role)
+const isBoard = key => boardRules.value.key === key
 
 // Game setup
 const startGame = async () => {
@@ -466,13 +499,13 @@ const startGame = async () => {
 }
 const notifyPlayerRoles = () => {
   players.value.forEach(p => {
-    const teammates = wolfRolesArr.includes(p.role)
-      ? players.value.filter(other => other.id !== p.id && wolfRolesArr.includes(other.role)).map(other => `${other.playerNumber}号${other.playerName}`).join('、')
+    const teammates = isPackWolf(p)
+      ? players.value.filter(other => other.id !== p.id && isPackWolf(other)).map(other => `${other.playerNumber}号${other.playerName}`).join('、')
       : ''
-    const winCondition = wolfRolesArr.includes(p.role) ? '狼人阵营人数达到或超过好人阵营' : '放逐全部狼人'
+    const winCondition = isWolfRole(p) ? '所有平民或所有神职出局；石像鬼属于狼人阵营' : '放逐全部狼人阵营玩家'
     const content = currentLocale() === 'zh-CN'
-      ? `你的身份是${getRoleName(p.role)}，胜利条件：${winCondition}。${teammates ? `狼队友：${teammates}。` : '除身份技能获得的信息外，其他玩家身份均未知。'}`
-      : `Your role is ${getRoleName(p.role)}. Win condition: ${wolfRolesArr.includes(p.role) ? 'wolves equal or outnumber the good team' : 'eliminate every wolf'}.${teammates ? ` Wolf teammates: ${teammates}.` : ' Other roles are unknown unless learned through your ability.'}`
+      ? `你的身份是${getRoleName(p.role)}，胜利条件：${winCondition}。${teammates ? `狼队友：${teammates}。` : '除身份技能获得的信息外，其他玩家身份均未知。'}本局板子规则：${boardRules.value.special}`
+      : `Your role is ${getRoleName(p.role)}. Win condition: ${isWolfRole(p) ? 'eliminate every villager or every good role' : 'eliminate every wolf-team player'}.${teammates ? ` Wolf teammates: ${teammates}.` : ' Other roles are unknown unless learned through your ability.'} Board rule: ${boardRules.value.special}`
     addGameMessage({ sender: $t('gamePlay.referee'), content, type: 'referee', visibility: 'private', privateFor: p.id })
   })
 }
@@ -526,6 +559,9 @@ const loadGameData = async () => {
       addRefereeMessage(currentLocale() === 'zh-CN'
         ? `本局为${roomInfo.value.playerCount || 12}人场，游戏板子：${boardLabel.value}。角色将严格按照该板子配置分配。`
         : `This is a ${roomInfo.value.playerCount || 12}-player game using the ${boardLabel.value} board. Roles follow this board configuration.`)
+      addRefereeMessage(currentLocale() === 'zh-CN'
+        ? `板子规则：${boardRules.value.special} 角色配置：${getRoleSummary(boardRules.value)}。`
+        : `Board rules: ${boardRules.value.special} Roles: ${getRoleSummary(boardRules.value)}.`)
       addRefereeMessage($t('gamePlay.gameHelp'))
     }
   } catch (e) { roomInfo.value = { playerCount: 12 }; players.value = [] }
@@ -538,19 +574,7 @@ const distributeRoles = async () => {
   } catch (e) {}
 }
 const loadBoardConfig = async () => {
-  const gb = roomInfo.value.gameBoard || route.query.gameBoard || 'standard'
-  const standardRoles = Number(roomInfo.value.playerCount || 12) <= 9
-    ? [{ role: '狼人', count: 3 }, { role: '平民', count: 3 }, { role: '预言家', count: 1 }, { role: '女巫', count: 1 }, { role: '猎人', count: 1 }]
-    : [{ role: '狼人', count: 4 }, { role: '平民', count: 4 }, { role: '预言家', count: 1 }, { role: '女巫', count: 1 }, { role: '猎人', count: 1 }, { role: '守卫', count: 1 }]
-  const configs = {
-    standard: { roles: standardRoles },
-    miracle_merchant: { roles: [{ role: '狼人', count: 3 }, { role: '狼王', count: 1 }, { role: '平民', count: 4 }, { role: '预言家', count: 1 }, { role: '女巫', count: 1 }, { role: '守卫', count: 1 }, { role: '奇迹商人', count: 1 }] },
-    wolfking_guard: { roles: [{ role: '狼人', count: 3 }, { role: '狼王', count: 1 }, { role: '平民', count: 4 }, { role: '预言家', count: 1 }, { role: '女巫', count: 1 }, { role: '猎人', count: 1 }, { role: '守卫', count: 1 }] },
-    wolf_beauty_knight: { roles: [{ role: '狼人', count: 3 }, { role: '狼美人', count: 1 }, { role: '平民', count: 4 }, { role: '预言家', count: 1 }, { role: '女巫', count: 1 }, { role: '骑士', count: 1 }, { role: '守卫', count: 1 }] },
-    white_wolf_knight: { roles: [{ role: '狼人', count: 3 }, { role: '白狼王', count: 1 }, { role: '平民', count: 4 }, { role: '预言家', count: 1 }, { role: '女巫', count: 1 }, { role: '骑士', count: 1 }, { role: '守卫', count: 1 }] },
-    gargoyle_gravedigger: { roles: [{ role: '狼人', count: 3 }, { role: '石像鬼', count: 1 }, { role: '平民', count: 4 }, { role: '预言家', count: 1 }, { role: '女巫', count: 1 }, { role: '守墓人', count: 1 }, { role: '猎人', count: 1 }] }
-  }
-  return configs[gb] || configs.standard
+  return boardRules.value
 }
 const shuffleArray = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] } return a }
 const startGamePhase = () => { currentPhase.value = 'night' }
@@ -560,7 +584,7 @@ const sendMessage = () => {
   const cp = players.value.find(p => p.id === selectedPlayerId.value)
   const name = cp ? cp.playerName : ($locale==='zh-CN'?'我':'Me')
   let type = 'player'
-  if (currentPhase.value === 'night' && cp && wolfRolesArr.includes(cp.role)) type = 'wolf'
+  if (currentPhase.value === 'night' && cp && isPackWolf(cp)) type = 'wolf'
   addGameMessage({ sender: name, content: inputMessage.value.trim(), type, visibility: type === 'wolf' ? 'wolves' : 'public' })
   inputMessage.value = ''; scrollToBottom()
 }
@@ -700,10 +724,12 @@ const killPlayer = (pid) => {
   if (p?.isAlive) { p.isAlive = false; p.isSpeaking = false }
 }
 const checkGameEnd = () => {
-  const aw = players.value.filter(p => p.isAlive && wolfRolesArr.includes(p.role)).length
-  const ag = players.value.filter(p => p.isAlive && !wolfRolesArr.includes(p.role)).length
+  const alive = alivePlayers.value
+  const aw = alive.filter(isWolfRole).length
+  const villagers = alive.filter(player => ['平民', 'Villager'].includes(player.role)).length
+  const gods = alive.filter(player => !isWolfRole(player) && !['平民', 'Villager'].includes(player.role)).length
   if (aw === 0) { addRefereeMessage($t('gamePlay.goodWin')); gameStarted.value = false; phaseRunning.value = false; return true }
-  if (aw >= ag) { addRefereeMessage($t('gamePlay.wolfWin')); gameStarted.value = false; phaseRunning.value = false; return true }
+  if (villagers === 0 || gods === 0) { addRefereeMessage($t('gamePlay.wolfWin')); gameStarted.value = false; phaseRunning.value = false; return true }
   if (!alivePlayers.value.length) { addRefereeMessage($t('gamePlay.allDead')); gameStarted.value = false; phaseRunning.value = false; return true }
   return false
 }
@@ -734,6 +760,15 @@ const initializeGameState = () => {
   lastPublicNightReport.value = ''
   lastGuardTargetId.value = null
   hunterSkillUsed = new Set()
+  wolfKingSkillUsed = new Set()
+  knightSkillUsed = new Set()
+  sheriffDirection.value = 'clockwise'
+  sheriffElectionDone.value = false
+  lastExiledPlayerId.value = null
+  lastWordsGiven.value = false
+  dayInterrupted.value = false
+  Object.assign(miracleMerchantState, { used: false, merchantId: null, luckyId: null, skill: null, pendingDeath: false })
+  Object.assign(wolfBeautyState, { previousTargetId: null, targetId: null })
   witchInventory.antidote = 1
   witchInventory.poison = 1
   Object.assign(nightState, createEmptyNightState())
@@ -833,16 +868,16 @@ const callStructuredAi = async (config, systemPrompt, userPrompt) => {
 }
 
 const roleVictoryCondition = (player, language) => {
-  if (language === 'en-US') return wolfRolesArr.includes(player.role)
-    ? 'The wolf team wins when living wolves equal or outnumber all other living players.'
-    : 'The good team wins by eliminating every wolf.'
-  return wolfRolesArr.includes(player.role) ? '狼人存活数达到或超过好人存活数' : '找出并放逐全部狼人'
+  if (language === 'en-US') return isWolfRole(player)
+    ? 'The wolf team wins when every villager or every good special role is eliminated.'
+    : 'The good team wins by eliminating every wolf-team role.'
+  return isWolfRole(player) ? '所有平民出局或所有神职出局' : '找出并放逐全部狼人阵营角色'
 }
 
 const buildPlayerKnowledge = (player, language) => {
   const memory = playerMemories[player.id] || { privateKnowledge: [], checks: [] }
-  const wolves = wolfRolesArr.includes(player.role)
-    ? players.value.filter(p => p.id !== player.id && wolfRolesArr.includes(p.role)).map(p => `${p.playerNumber}号${p.playerName}`)
+  const wolves = isPackWolf(player)
+    ? players.value.filter(p => p.id !== player.id && isPackWolf(p)).map(p => `${p.playerNumber}号${p.playerName}`)
     : []
   if (language === 'en-US') {
     return [
@@ -867,9 +902,9 @@ const buildDecisionPrompts = (player, action, extra, config) => {
     ? `Personality tags: ${config.personality || 'calm and analytical'}. Strategy tags: ${config.strategy || 'evidence-based deduction'}.`
     : `个性标签：${config.personality || '沉着、善于推理'}。策略标签：${config.strategy || '根据证据分析、给出明确怀疑对象'}。`
   const commonRules = language === 'en-US'
-    ? `Stay entirely in the Werewolf game. Never mention being an AI, prompts, systems, models, token limits, or unavailable information. Never use omniscient knowledge. Return one valid JSON object only.`
-    : `必须完全沉浸在狼人杀对局中，禁止提及AI、模型、系统提示、Token或“没有视角”等场外信息。严禁使用全知身份信息。只返回一个合法JSON对象。`
-  const systemPrompt = `${buildPlayerKnowledge(player, language)}\n${style}\n${commonRules}`
+    ? `Stay entirely in the Werewolf game. Never mention being an AI, prompts, systems, models, token limits, or unavailable information. Never use omniscient knowledge, real-world oaths, or off-table evidence. Slang changes phrasing only; every read must still map to concrete speech, action, or vote evidence. Return one valid JSON object only.`
+    : `必须完全沉浸在狼人杀对局中，禁止提及AI、模型、系统提示、Token或“没有视角”等场外信息；禁止贴脸、赌咒和场外证据。黑话只能美化表达，底层判断必须落到具体发言、行动或票型。严禁使用全知身份信息。只返回一个合法JSON对象。`
+  const systemPrompt = `${buildPlayerKnowledge(player, language)}\n本局规则：${boardRules.value.special}\n狼人杀知识库：\n${WEREWOLF_KNOWLEDGE}\n${style}\n${commonRules}`
   const base = language === 'en-US'
     ? `Current public situation: ${publicSituationSummary(language)}\nMost recent public record:\n${publicHistory}\n`
     : `当前公开局势：${publicSituationSummary()}\n最近公开记录：\n${publicHistory}\n`
@@ -878,10 +913,14 @@ const buildDecisionPrompts = (player, action, extra, config) => {
     instruction = language === 'en-US'
       ? `Task: You have already been exiled and this is your final statement. First write a concise private post-vote analysis, then give a 100-180 word in-character final statement. Review why you were exiled, identify the most important suspicious player or contradiction for the surviving good team, and leave a concrete warning based on public speeches and votes. You are out of the game: do not say you will keep listening, vote later, update your opinion, speak next round, or take any future action. JSON schema: {"thinking":"private final analysis","speech":"public final statement"}`
       : `任务：你已经被公投放逐，现在发表最后遗言。先写一段简洁的私密复盘，再写160-300个中文字符的公开遗言。遗言要复盘自己为何被推出局，结合公开发言和票型指出最值得存活好人关注的玩家或矛盾，并留下明确警示。你已经出局，严禁说“继续听发言”“之后再投”“准备投给”“下一轮发言”“再调整判断”等任何自己未来还会参与游戏的内容。JSON格式：{"thinking":"私密最终复盘","speech":"公开遗言"}`
-  } else if (action === 'speech' || action === 'pkSpeech') {
+  } else if (action === 'speech' || action === 'pkSpeech' || action === 'sheriffSpeech') {
+    const stageName = action === 'pkSpeech' ? '平票PK发言' : action === 'sheriffSpeech' ? '警长竞选发言' : '正常白天发言'
+    const specialSchema = hasRole(player, 'whiteWolf') && action === 'speech'
+      ? ',"explode":是否自爆,"target":自爆带走的玩家编号或null'
+      : ''
     instruction = language === 'en-US'
-      ? `Task: ${action === 'pkSpeech' ? 'give a tie-break PK speech' : 'give your normal daytime speech'}. First write a concise private strategic analysis, then a public in-character speech of 120-220 English words. The public speech must analyze the actual night result, prior speeches or votes, name at least one concrete suspect or contradiction, and state a voting intention. Do not reveal private role information unless doing so is a deliberate in-game claim. JSON schema: {"thinking":"private strategic summary","speech":"public speech"}`
-      : `任务：${action === 'pkSpeech' ? '平票PK发言' : '正常白天发言'}。先写一段简洁的私密局势分析，再写180-350个中文字符的公开发言。公开发言必须结合真实夜间结果、此前发言或票型，至少点出一名具体怀疑对象或一处矛盾，并说明自己的投票倾向。除非有明确游戏策略，不得泄露私密身份信息。JSON格式：{"thinking":"私密策略摘要","speech":"公开发言"}`
+      ? `Task: give a ${stageName} speech. First write private strategic analysis, then a 120-220 word public in-character speech. Analyze actual night results, prior speeches or votes, name concrete suspects and a voting intention. JSON schema: {"thinking":"private strategy","speech":"public speech"${specialSchema}}`
+      : `任务：${stageName}。先写简洁的私密局势分析，再写180-350个中文字符的公开发言。必须结合真实夜间结果、此前发言或票型，至少点出一名具体怀疑对象或矛盾并说明投票倾向。JSON格式：{"thinking":"私密策略摘要","speech":"公开发言"${specialSchema}}`
   } else if (action === 'guard') {
     instruction = language === 'en-US'
       ? `Choose one target number to guard, or null to leave empty. You may guard yourself, but cannot guard the same target on consecutive nights. A simultaneous guard and antidote on the wolf target causes that player to die. Candidates: ${extra.candidates}. JSON: {"thinking":"private decision summary","target":number|null}`
@@ -889,7 +928,7 @@ const buildDecisionPrompts = (player, action, extra, config) => {
   } else if (action === 'wolf') {
     instruction = language === 'en-US'
       ? `Independently submit one kill target without seeing teammates' votes. Candidates: ${extra.candidates}. JSON: {"thinking":"private wolf strategy summary","target":number}`
-      : `请独立提交一个击杀目标，你看不到其他狼人的本轮投票。可选：${extra.candidates}。JSON：{"thinking":"私密狼队策略摘要","target":玩家编号}`
+      : `请独立提交一个击杀目标，你看不到其他狼人的本轮投票。可按策略选择空刀（target为null）或允许规则内的狼王自刀。可选：${extra.candidates}。JSON：{"thinking":"私密狼队策略摘要","target":玩家编号或null}`
   } else if (action === 'witch') {
     instruction = language === 'en-US'
       ? `Wolf target is ${extra.wolfTarget}. Antidote remaining: ${extra.antidote}; poison remaining: ${extra.poison}. Decide whether to save and optionally poison one living player. You do not know the guard target. JSON: {"thinking":"private decision summary","useAntidote":boolean,"poisonTarget":number|null}`
@@ -906,6 +945,31 @@ const buildDecisionPrompts = (player, action, extra, config) => {
     instruction = language === 'en-US'
       ? `You died by ${extra.cause} and may fire your Hunter ability once. Choose exactly one living target based only on public evidence. Candidates: ${extra.candidates}. JSON: {"thinking":"private shooting rationale","target":number}`
       : `你因${extra.cause}出局，可以发动一次猎人技能。请只根据公开信息，从存活玩家中选择一名开枪带走。可选：${extra.candidates}。JSON：{"thinking":"私密开枪理由","target":玩家编号}`
+  } else if (action === 'miracle') {
+    instruction = language === 'en-US'
+      ? `Use your once-per-game Merchant ability. Choose another player and grant check, poison, or guard. Candidates: ${extra.candidates}. JSON: {"thinking":"private plan","target":number,"skill":"check|poison|guard"}`
+      : `发动每局一次的奇迹商人技能：选择另一名玩家成为幸运儿，并授予查验、毒药、守护之一。可选：${extra.candidates}。JSON：{"thinking":"私密授予策略","target":玩家编号,"skill":"check或poison或guard"}`
+  } else if (action === 'grantedCheck' || action === 'gargoyle') {
+    instruction = language === 'en-US'
+      ? `Choose one player to inspect. ${action === 'gargoyle' ? 'You learn the exact role and may not repeat a target.' : 'You learn good or wolf.'} Candidates: ${extra.candidates}. JSON: {"thinking":"private check plan","target":number}`
+      : `选择一名玩家查验。${action === 'gargoyle' ? '你会得知具体身份，不能验自己或重复验人。' : '你会得知好人或狼人。'}可选：${extra.candidates}。JSON：{"thinking":"私密查验策略","target":玩家编号}`
+  } else if (action === 'grantedPoison' || action === 'grantedGuard' || action === 'wolfBeauty') {
+    const ability = action === 'grantedPoison' ? '一次性毒药' : action === 'grantedGuard' ? '一次性守护' : '狼美人魅惑'
+    instruction = `使用${ability}选择一名目标；狼美人不可连续两夜魅惑同一人。可选：${extra.candidates}。JSON：{"thinking":"私密技能策略","target":玩家编号}`
+  } else if (action === 'sheriffCampaign') {
+    instruction = language === 'en-US'
+      ? `Decide whether to run for sheriff and choose clockwise or counterclockwise speaking order if elected. JSON: {"thinking":"private campaign plan","run":boolean,"direction":"clockwise|counterclockwise"}`
+      : `决定是否上警，并选择当选后希望采用顺时针或逆时针发言。预言家通常应上警，狼人可悍跳。JSON：{"thinking":"私密竞选策略","run":true或false,"direction":"clockwise或counterclockwise"}`
+  } else if (action === 'sheriffVote') {
+    instruction = language === 'en-US'
+      ? `Vote for one sheriff candidate. You may vote for yourself. Candidates: ${extra.candidates}. JSON: {"thinking":"private sheriff read","target":number}`
+      : `请从候选人中投票选出警长，可以投自己。候选：${extra.candidates}。JSON：{"thinking":"私密警长判断","target":玩家编号}`
+  } else if (action === 'sheriffTransfer') {
+    instruction = `你是死亡警长，必须把警徽传给一名存活玩家，或撕掉警徽（target为null）。可选：${extra.candidates}。JSON：{"thinking":"私密警徽流判断","target":玩家编号或null}`
+  } else if (action === 'knight') {
+    instruction = `你可在放逐投票前发动每局一次的骑士决斗，也可保留技能。可选：${extra.candidates}。JSON：{"thinking":"私密决斗判断","use":true或false,"target":玩家编号或null}`
+  } else if (action === 'wolfKing') {
+    instruction = `你符合狼王开枪条件，可带走一名存活玩家。可选：${extra.candidates}。JSON：{"thinking":"私密开枪策略","target":玩家编号}`
   }
   return { language, systemPrompt, userPrompt: `${base}\n${instruction}` }
 }
@@ -943,6 +1007,104 @@ const recordPrivateThinking = (player, thinking, stage) => {
   })
 }
 
+const runGrantedSkillAction = async (version, lucky, skill) => {
+  if (!lucky?.isAlive || !isLoopActive(version)) return
+  const candidates = alivePlayers.value.filter(player => player.id !== lucky.id)
+  if (!candidates.length) return
+  const action = skill === 'check' ? 'grantedCheck' : skill === 'poison' ? 'grantedPoison' : 'grantedGuard'
+  const decision = await requestPlayerDecision(lucky, action, { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(lucky, decision.thinking, `幸运儿${skill}`)
+  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  if (!target) return
+  nightState.miracleSkillTargetId = target.id
+  if (skill === 'check') {
+    const result = isWolfRole(target) ? '狼人' : '好人'
+    playerMemories[lucky.id].privateKnowledge.push(`奇迹查验${target.playerNumber}号，结果为${result}`)
+    addGameMessage({ sender: `${lucky.playerNumber}号幸运儿`, content: `一次性查验${target.playerNumber}号：${result}`, type: 'night-action', visibility: 'private', privateFor: lucky.id })
+  } else if (skill === 'poison') {
+    nightState.miraclePoisonTargetId = target.id
+    addGameMessage({ sender: `${lucky.playerNumber}号幸运儿`, content: `对${target.playerNumber}号使用一次性毒药`, type: 'night-action', visibility: 'private', privateFor: lucky.id })
+  } else {
+    nightState.miracleGuardTargetId = target.id
+    addGameMessage({ sender: `${lucky.playerNumber}号幸运儿`, content: `一次性守护${target.playerNumber}号`, type: 'night-action', visibility: 'private', privateFor: lucky.id })
+  }
+  await phaseDelay()
+}
+
+const runMiracleMerchantAction = async version => {
+  currentPhase.value = 'night_miracle'
+  if (!isBoard('miracle_merchant') || miracleMerchantState.used) return
+  const merchant = alivePlayers.value.find(player => hasRole(player, 'miracle'))
+  if (!merchant || !isLoopActive(version)) return
+  addRefereeMessage('奇迹商人最先睁眼，选择幸运儿和一项一次性技能。', { visibility: 'god', detail: '每局限一次；幸运儿若为狼人则不获技能，奇迹商人次日出局。' })
+  const candidates = alivePlayers.value.filter(player => player.id !== merchant.id)
+  const decision = await requestPlayerDecision(merchant, 'miracle', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(merchant, decision.thinking, '奇迹商人授予')
+  const lucky = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  const skill = ['check', 'poison', 'guard'].includes(decision.skill) ? decision.skill : randomItem(['check', 'poison', 'guard'])
+  if (!lucky) return
+  Object.assign(miracleMerchantState, { used: true, merchantId: merchant.id, luckyId: lucky.id, skill, pendingDeath: isWolfRole(lucky) })
+  addGameMessage({ sender: `${merchant.playerNumber}号奇迹商人`, content: `选择${lucky.playerNumber}号为幸运儿，授予${{ check: '查验', poison: '毒药', guard: '守护' }[skill]}`, type: 'night-action', visibility: 'private', privateFor: merchant.id })
+  if (isWolfRole(lucky)) {
+    addRefereeMessage('幸运儿属于狼人阵营，技能授予失败，奇迹商人将在天亮时出局。', { visibility: 'god' })
+    return
+  }
+  playerMemories[lucky.id].privateKnowledge.push(`奇迹商人授予你一次性${{ check: '查验', poison: '毒药', guard: '守护' }[skill]}技能，须在本夜使用`)
+  await runGrantedSkillAction(version, lucky, skill)
+}
+
+const runWolfBeautyAction = async version => {
+  currentPhase.value = 'night_wolf_beauty'
+  if (!isBoard('wolf_beauty_knight')) return
+  const beauty = alivePlayers.value.find(player => hasRole(player, 'wolfBeauty'))
+  if (!beauty || !isLoopActive(version)) return
+  const candidates = alivePlayers.value.filter(player => player.id !== beauty.id && player.id !== wolfBeautyState.targetId)
+  if (!candidates.length) return
+  addRefereeMessage('狼美人单独选择今夜魅惑目标。', { visibility: 'god', detail: '不能连续两夜魅惑同一人；被骑士决斗出局不触发殉情。' })
+  const decision = await requestPlayerDecision(beauty, 'wolfBeauty', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(beauty, decision.thinking, '狼美人魅惑')
+  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  wolfBeautyState.previousTargetId = wolfBeautyState.targetId
+  wolfBeautyState.targetId = target?.id || null
+  nightState.wolfBeautyTargetId = target?.id || null
+  if (target) addGameMessage({ sender: `${beauty.playerNumber}号狼美人`, content: `魅惑${target.playerNumber}号${target.playerName}`, type: 'night-action', visibility: 'private', privateFor: beauty.id })
+  await phaseDelay()
+}
+
+const runGargoyleAction = async version => {
+  currentPhase.value = 'night_gargoyle'
+  if (!isBoard('gargoyle_gravedigger')) return
+  const gargoyle = alivePlayers.value.find(player => hasRole(player, 'gargoyle'))
+  if (!gargoyle || !isLoopActive(version)) return
+  const checkedIds = (playerMemories[gargoyle.id]?.checks || []).map(check => check.targetId)
+  const candidates = alivePlayers.value.filter(player => player.id !== gargoyle.id && !checkedIds.includes(player.id))
+  if (!candidates.length) return
+  addRefereeMessage('石像鬼睁眼查验一名未查验玩家的具体身份。', { visibility: 'god' })
+  const decision = await requestPlayerDecision(gargoyle, 'gargoyle', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(gargoyle, decision.thinking, '石像鬼查验')
+  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  if (!target) return
+  nightState.gargoyleTargetId = target.id
+  nightState.gargoyleResult = target.role
+  playerMemories[gargoyle.id].checks.push({ day: currentDay.value, targetId: target.id, result: target.role })
+  playerMemories[gargoyle.id].privateKnowledge.push(`第${currentRound.value}夜查验${target.playerNumber}号，具体身份为${target.role}`)
+  addGameMessage({ sender: `${gargoyle.playerNumber}号石像鬼`, content: `查验${target.playerNumber}号：${target.role}`, type: 'night-action', visibility: 'private', privateFor: gargoyle.id })
+  await phaseDelay()
+}
+
+const runGravediggerAction = async () => {
+  currentPhase.value = 'night_gravedigger'
+  if (!isBoard('gargoyle_gravedigger') || currentRound.value < 2) return
+  const gravedigger = alivePlayers.value.find(player => hasRole(player, 'gravedigger'))
+  const exiled = players.value.find(player => player.id === lastExiledPlayerId.value)
+  if (!gravedigger || !exiled) return
+  const result = isWolfRole(exiled) ? '狼人' : '好人'
+  nightState.gravediggerResult = result
+  playerMemories[gravedigger.id].privateKnowledge.push(`上一白天被放逐的${exiled.playerNumber}号属于${result}阵营`)
+  addGameMessage({ sender: `${gravedigger.playerNumber}号守墓人`, content: `上个白天被放逐的${exiled.playerNumber}号是${result}`, type: 'night-action', visibility: 'private', privateFor: gravedigger.id })
+  addRefereeMessage('守墓人强制获知了上一名放逐者的阵营。', { visibility: 'god', detail: `${exiled.playerNumber}号：${result}` })
+}
+
 const runGuardAction = async (version) => {
   currentPhase.value = 'night_guard'
   addRefereeMessage('守卫请睁眼并选择守护目标。', { visibility: 'god', detail: '可自守、可空守、不可连续两晚守同一人；同守同救判定死亡。' })
@@ -965,13 +1127,19 @@ const runGuardAction = async (version) => {
 const runWolfActions = async (version) => {
   currentPhase.value = 'night_wolf'
   addRefereeMessage('狼人请睁眼。每名狼人独立提交刀口，由上帝按多数票结算。', { visibility: 'god' })
-  const wolves = alivePlayers.value.filter(player => wolfRolesArr.includes(player.role))
-  const candidates = alivePlayers.value.filter(player => !wolfRolesArr.includes(player.role))
+  const packWolves = alivePlayers.value.filter(isPackWolf)
+  const gargoyle = alivePlayers.value.find(player => hasRole(player, 'gargoyle'))
+  const wolves = packWolves.length ? packWolves : (gargoyle ? [gargoyle] : [])
+  const candidates = alivePlayers.value.filter(player => !isWolfRole(player) || (packWolves.length && hasRole(player, 'wolfKing')))
+  if (!packWolves.length && gargoyle) {
+    addRefereeMessage('其他狼人已全部出局，石像鬼本夜获得单独袭击能力。', { visibility: 'god' })
+  }
   for (const wolf of wolves) {
     if (!isLoopActive(version) || !candidates.length) break
     const decision = await requestPlayerDecision(wolf, 'wolf', { candidates: candidates.map(p => `${p.playerNumber}号`).join('、') })
     recordPrivateThinking(wolf, decision.thinking, '狼人刀口')
-    const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+    const deliberatelyEmpty = Object.prototype.hasOwnProperty.call(decision, 'target') && decision.target === null
+    const target = deliberatelyEmpty ? null : (resolvePlayerTarget(decision.target, candidates) || randomItem(candidates))
     if (!target) continue
     nightState.wolfVotes.push({ voterId: wolf.id, targetId: target.id })
     addGameMessage({ sender: `${wolf.playerNumber}号狼人`, content: `提交击杀${target.playerNumber}号${target.playerName}`, type: 'night-action', visibility: 'private', privateFor: wolf.id })
@@ -999,7 +1167,7 @@ const runWitchAction = async (version) => {
     return
   }
   const wolfTarget = players.value.find(player => player.id === nightState.wolfTargetId)
-  addRefereeMessage('女巫请睁眼并决定是否使用药剂。', { visibility: 'god', detail: `解药${witchInventory.antidote}瓶，毒药${witchInventory.poison}瓶；同守同救判定死亡。` })
+  addRefereeMessage('女巫请睁眼并决定是否使用药剂。', { visibility: 'god', detail: `解药${witchInventory.antidote}瓶，毒药${witchInventory.poison}瓶；每夜最多使用一瓶，12人局不可自救，同守同救判定死亡。` })
   const poisonCandidates = alivePlayers.value.filter(player => player.id !== witch.id)
   const decision = await requestPlayerDecision(witch, 'witch', {
     wolfTarget: wolfTarget ? `${wolfTarget.playerNumber}号${wolfTarget.playerName}` : '无有效刀口',
@@ -1007,10 +1175,13 @@ const runWitchAction = async (version) => {
     poison: witchInventory.poison
   })
   recordPrivateThinking(witch, decision.thinking, '女巫行动')
-  nightState.witchSaved = Boolean(wolfTarget && witchInventory.antidote > 0 && (decision.useAntidote ?? (currentRound.value === 1 && Math.random() < 0.6)))
+  const maySelfSave = wolfTarget?.id !== witch.id
+    || (boardRules.value.witchCanSelfSave === 'first-night' && currentRound.value === 1)
+  nightState.witchSaved = Boolean(wolfTarget && witchInventory.antidote > 0 && maySelfSave && (decision.useAntidote ?? (currentRound.value === 1 && Math.random() < 0.6)))
   let poisonTarget = resolvePlayerTarget(decision.poisonTarget, poisonCandidates)
   if (!decision.poisonTarget && Math.random() >= 0.12) poisonTarget = null
   if (witchInventory.poison <= 0) poisonTarget = null
+  if (nightState.witchSaved) poisonTarget = null
   nightState.witchPoisonTargetId = poisonTarget?.id || null
   if (nightState.witchSaved) witchInventory.antidote--
   if (nightState.witchPoisonTargetId) witchInventory.poison--
@@ -1047,7 +1218,7 @@ const runSeerAction = async (version) => {
 const resolveNight = () => {
   const deaths = new Set()
   const wolfTarget = players.value.find(player => player.id === nightState.wolfTargetId)
-  const guarded = Boolean(wolfTarget && nightState.guardTargetId === wolfTarget.id)
+  const guarded = Boolean(wolfTarget && (nightState.guardTargetId === wolfTarget.id || nightState.miracleGuardTargetId === wolfTarget.id))
   const saved = Boolean(wolfTarget && nightState.witchSaved)
   let mainReason = '狼人没有形成有效刀口'
   if (wolfTarget) {
@@ -1063,10 +1234,13 @@ const resolveNight = () => {
       mainReason = `${wolfTarget.playerNumber}号遭狼人击杀且未获得有效保护`
     }
   }
-  const poisoned = players.value.find(player => player.id === nightState.witchPoisonTargetId)
-  if (poisoned) deaths.add(poisoned.id)
+  const poisoned = players.value.filter(player => [nightState.witchPoisonTargetId, nightState.miraclePoisonTargetId].includes(player.id))
+  poisoned.forEach(player => deaths.add(player.id))
+  if (miracleMerchantState.pendingDeath && miracleMerchantState.merchantId) deaths.add(miracleMerchantState.merchantId)
   nightState.deaths = [...deaths]
-  nightState.explanation = poisoned ? `${mainReason}；女巫毒杀${poisoned.playerNumber}号` : mainReason
+  const poisonDetail = poisoned.length ? `；毒药带走${poisoned.map(player => `${player.playerNumber}号`).join('、')}` : ''
+  const merchantDetail = miracleMerchantState.pendingDeath ? '；幸运儿为狼人，奇迹商人遭受反噬出局' : ''
+  nightState.explanation = `${mainReason}${poisonDetail}${merchantDetail}`
   if (!nightState.deaths.length) nightState.explanation = `平安夜：${mainReason}`
   addRefereeMessage('夜间行动结算完成。', { visibility: 'god', detail: nightState.explanation })
 }
@@ -1074,13 +1248,24 @@ const resolveNight = () => {
 const runNightPhase = async (version) => {
   currentPhase.value = 'night'
   resetNightState()
+  const actionLabels = { miracle: '奇迹商人', gravedigger: '守墓人', gargoyle: '石像鬼', guard: '守卫', wolves: '狼人', wolfBeauty: '狼美人', witch: '女巫', seer: '预言家' }
   addRefereeMessage(currentLocale() === 'zh-CN'
-    ? `第${currentRound.value}夜开始，天黑请闭眼。夜间行动将按守卫、狼人、女巫、预言家的固定顺序依次进行。`
-    : `Night ${currentRound.value} begins. Actions resolve sequentially: Guard, Wolves, Witch, then Seer.`)
-  await runGuardAction(version)
-  await runWolfActions(version)
-  await runWitchAction(version)
-  await runSeerAction(version)
+    ? `第${currentRound.value}夜开始，天黑请闭眼。本板子行动顺序：${boardRules.value.nightOrder.map(action => actionLabels[action]).join('→')}。`
+    : `Night ${currentRound.value} begins. Board action order: ${boardRules.value.nightOrder.join(' -> ')}.`)
+  const actions = {
+    miracle: () => runMiracleMerchantAction(version),
+    gravedigger: () => runGravediggerAction(version),
+    gargoyle: () => runGargoyleAction(version),
+    guard: () => runGuardAction(version),
+    wolves: () => runWolfActions(version),
+    wolfBeauty: () => runWolfBeautyAction(version),
+    witch: () => runWitchAction(version),
+    seer: () => runSeerAction(version)
+  }
+  for (const action of boardRules.value.nightOrder) {
+    if (!isLoopActive(version)) break
+    await actions[action]?.()
+  }
   if (isLoopActive(version)) resolveNight()
 }
 
@@ -1111,7 +1296,68 @@ const resolveHunterSkill = async (hunter, version, cause) => {
   killPlayer(target.id)
   addRefereeMessage(`${hunter.playerNumber}号猎人发动技能，开枪带走${target.playerNumber}号${target.playerName}。`)
   await phaseDelay(500)
-  await resolveHunterSkill(target, version, 'hunter')
+  await resolveDeathEffects(target, version, 'hunter')
+}
+
+const transferSheriffBadge = async (deadSheriff, version, consumed = false) => {
+  if (!deadSheriff?.isSheriff) return
+  deadSheriff.isSheriff = false
+  if (consumed) {
+    addRefereeMessage('警徽被狼人自爆吞掉，本局警徽作废。')
+    return
+  }
+  const candidates = alivePlayers.value.filter(player => player.id !== deadSheriff.id)
+  if (!candidates.length || !isLoopActive(version)) {
+    addRefereeMessage('警长出局且无可传递目标，警徽作废。')
+    return
+  }
+  const decision = await requestPlayerDecision(deadSheriff, 'sheriffTransfer', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(deadSheriff, decision.thinking, '警徽流')
+  const target = resolvePlayerTarget(decision.target, candidates)
+  if (!target) {
+    addRefereeMessage(`${deadSheriff.playerNumber}号警长选择撕掉警徽。`)
+    return
+  }
+  setSheriff(target.id)
+  addRefereeMessage(`${deadSheriff.playerNumber}号将警徽传给${target.playerNumber}号${target.playerName}。`)
+}
+
+const resolveWolfKingSkill = async (wolfKing, version, cause) => {
+  if (!wolfKing || !hasRole(wolfKing, 'wolfKing') || wolfKingSkillUsed.has(wolfKing.id) || !isLoopActive(version)) return
+  const allowed = ['exile', 'hunter', 'night'].includes(cause)
+  if (!allowed) {
+    addRefereeMessage('狼王本次死因不满足开枪条件，技能未发动。', { visibility: 'god', detail: `死因：${cause}` })
+    return
+  }
+  wolfKingSkillUsed.add(wolfKing.id)
+  const candidates = alivePlayers.value.filter(player => player.id !== wolfKing.id)
+  if (!candidates.length) return
+  const decision = await requestPlayerDecision(wolfKing, 'wolfKing', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(wolfKing, decision.thinking, '狼王开枪')
+  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  if (!target) return
+  killPlayer(target.id)
+  addRefereeMessage(`${wolfKing.playerNumber}号狼王发动技能，开枪带走${target.playerNumber}号${target.playerName}。`)
+  await phaseDelay(500)
+  await resolveDeathEffects(target, version, 'wolfKing')
+}
+
+const resolveWolfBeautyLink = async (beauty, version, cause) => {
+  if (!beauty || !hasRole(beauty, 'wolfBeauty') || cause === 'knight' || !wolfBeautyState.targetId || !isLoopActive(version)) return
+  const linked = players.value.find(player => player.id === wolfBeautyState.targetId && player.isAlive)
+  wolfBeautyState.targetId = null
+  if (!linked) return
+  killPlayer(linked.id)
+  addRefereeMessage(`${linked.playerNumber}号${linked.playerName}因狼美人魅惑而殉情出局。`)
+  await resolveDeathEffects(linked, version, 'romance')
+}
+
+const resolveDeathEffects = async (player, version, cause, options = {}) => {
+  if (!player || !isLoopActive(version)) return
+  await resolveHunterSkill(player, version, cause)
+  await resolveWolfKingSkill(player, version, cause)
+  await resolveWolfBeautyLink(player, version, cause)
+  await transferSheriffBadge(player, version, options.consumeSheriff)
 }
 
 const announceDay = async (version) => {
@@ -1127,10 +1373,14 @@ const announceDay = async (version) => {
       : `Last night, player(s) ${numbers} died. Deaths are unordered.`
   }
   addRefereeMessage(lastPublicNightReport.value, { detail: nightState.explanation })
+  if (nightState.deaths.length && currentRound.value === 1 && Number(boardRules.value.players) === 12 && !lastWordsGiven.value) {
+    const firstNightDead = players.value.find(player => player.id === nightState.deaths[0])
+    await giveLastWords(firstNightDead, version, 'night')
+  }
   for (const playerId of nightState.deaths) {
     const player = players.value.find(candidate => candidate.id === playerId)
-    const cause = playerId === nightState.witchPoisonTargetId ? 'poison' : 'night'
-    await resolveHunterSkill(player, version, cause)
+    const cause = [nightState.witchPoisonTargetId, nightState.miraclePoisonTargetId].includes(playerId) ? 'poison' : 'night'
+    await resolveDeathEffects(player, version, cause)
   }
   addRefereeMessage(currentLocale() === 'zh-CN' ? `当前局势简报：${publicSituationSummary()}` : `Situation briefing: ${publicSituationSummary()}`)
   await phaseDelay(800)
@@ -1194,14 +1444,22 @@ const generatePublicSpeech = async (player, action = 'speech') => {
   const thinking = String(decision.thinking || (decision.language === 'en-US'
     ? `I need to connect the public night result with concrete speech and vote evidence while protecting my role.`
     : `需要把公开夜间结果与具体发言、票型联系起来，同时根据身份规划是否暴露信息。`)).trim()
-  return { speech, thinking, language: decision.language }
+  return {
+    speech,
+    thinking,
+    language: decision.language,
+    explode: Boolean(decision.explode),
+    target: decision.target,
+    useKnight: Boolean(decision.use)
+  }
 }
 
 const createRandomSpeechOrder = () => {
   const ordered = [...alivePlayers.value].sort((a, b) => a.playerNumber - b.playerNumber)
   if (!ordered.length) return { ids: [], direction: 'clockwise', start: null }
   const startIndex = Math.floor(Math.random() * ordered.length)
-  const clockwise = Math.random() < 0.5
+  const sheriff = alivePlayers.value.find(player => player.isSheriff)
+  const clockwise = sheriff ? sheriffDirection.value === 'clockwise' : Math.random() < 0.5
   const ids = []
   for (let offset = 0; offset < ordered.length; offset++) {
     const index = clockwise
@@ -1210,6 +1468,44 @@ const createRandomSpeechOrder = () => {
     ids.push(ordered[index].id)
   }
   return { ids, direction: clockwise ? 'clockwise' : 'counterclockwise', start: ordered[startIndex] }
+}
+
+const runSheriffElection = async version => {
+  if (!boardRules.value.sheriff || sheriffElectionDone.value || !isLoopActive(version)) return
+  currentPhase.value = 'sheriff'
+  addRefereeMessage('第一天天亮后进入警长竞选。所有存活玩家私下决定是否上警，竞选发言结束后公开投票。')
+  const campaignPlans = new Map()
+  const candidates = []
+  for (const player of [...alivePlayers.value]) {
+    const decision = await requestPlayerDecision(player, 'sheriffCampaign')
+    recordPrivateThinking(player, decision.thinking, '警长竞选')
+    const run = decision.run === undefined ? Math.random() < 0.55 : Boolean(decision.run)
+    if (run) {
+      candidates.push(player)
+      campaignPlans.set(player.id, decision.direction === 'counterclockwise' ? 'counterclockwise' : 'clockwise')
+    }
+  }
+  const finalCandidates = candidates.length ? candidates : [randomItem(alivePlayers.value)]
+  addRefereeMessage(`本次上警玩家：${finalCandidates.map(player => `${player.playerNumber}号`).join('、')}。`)
+  await runSpeechPhase(version, finalCandidates.map(player => player.id), 'sheriffSpeech')
+  if (!isLoopActive(version)) return
+  const counts = new Map(finalCandidates.map(player => [player.id, 0]))
+  for (const voter of [...alivePlayers.value]) {
+    const decision = await requestPlayerDecision(voter, 'sheriffVote', { candidates: finalCandidates.map(player => `${player.playerNumber}号`).join('、') })
+    recordPrivateThinking(voter, decision.thinking, '警长投票')
+    const target = resolvePlayerTarget(decision.target, finalCandidates) || randomItem(finalCandidates)
+    if (target) counts.set(target.id, (counts.get(target.id) || 0) + 1)
+  }
+  const max = Math.max(...counts.values())
+  const leaders = finalCandidates.filter(player => counts.get(player.id) === max)
+  const winner = randomItem(leaders)
+  if (winner) {
+    setSheriff(winner.id)
+    sheriffDirection.value = campaignPlans.get(winner.id) || 'clockwise'
+    axios.put('/game/player/setSheriff', { roomId, playerId: winner.id }).catch(() => {})
+    addRefereeMessage(`${winner.playerNumber}号${winner.playerName}当选警长，之后由其决定${sheriffDirection.value === 'clockwise' ? '顺时针' : '逆时针'}发言。${leaders.length > 1 ? '平票结果由代码随机裁决。' : ''}`)
+  }
+  sheriffElectionDone.value = true
 }
 
 const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech') => {
@@ -1231,6 +1527,22 @@ const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech')
     startPlayerSpeaking(player.id)
     const result = await generatePublicSpeech(player, action)
     if (!isLoopActive(version)) break
+    if (action === 'speech' && hasRole(player, 'whiteWolf') && isBoard('white_wolf_knight') && result.explode) {
+      closeSpeech('pass')
+      killPlayer(player.id)
+      dayInterrupted.value = true
+      addRefereeMessage(`${player.playerNumber}号白狼王在白天发言阶段自爆，立即终止发言并进入黑夜。`)
+      const candidates = alivePlayers.value.filter(candidate => candidate.id !== player.id)
+      const target = resolvePlayerTarget(result.target, candidates) || randomItem(candidates)
+      if (target) {
+        killPlayer(target.id)
+        addRefereeMessage(`白狼王自爆带走${target.playerNumber}号${target.playerName}。`)
+        await resolveDeathEffects(target, version, 'whiteWolf')
+      }
+      await resolveDeathEffects(player, version, 'whiteWolf', { consumeSheriff: true })
+      endPlayerSpeaking()
+      break
+    }
     recordPrivateThinking(player, result.thinking, action === 'pkSpeech' ? 'PK发言' : '白天发言')
     addDialogMessage(player.playerName, result.speech, 'player')
     playerMemories[player.id]?.speeches.push({ day: currentDay.value, speech: result.speech })
@@ -1240,6 +1552,34 @@ const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech')
   }
   speechIndex.value = -1
   if (!onlyCandidates && isLoopActive(version)) addRefereeMessage('所有存活玩家发言完毕，主持人现在进入放逐投票。')
+}
+
+const runKnightAction = async version => {
+  if (!isBoard('wolf_beauty_knight') && !isBoard('white_wolf_knight')) return
+  const knight = alivePlayers.value.find(player => hasRole(player, 'knight'))
+  if (!knight || knightSkillUsed.has(knight.id) || !isLoopActive(version)) return
+  const candidates = alivePlayers.value.filter(player => player.id !== knight.id)
+  addRefereeMessage('警长竞选结束，骑士可在放逐投票前翻牌决斗，也可以保留技能。')
+  const decision = await requestPlayerDecision(knight, 'knight', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(knight, decision.thinking, '骑士决斗')
+  if (!decision.use) {
+    addGameMessage({ sender: `${knight.playerNumber}号骑士`, content: '本轮保留决斗技能', type: 'night-action', visibility: 'private', privateFor: knight.id })
+    return
+  }
+  knightSkillUsed.add(knight.id)
+  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  if (!target) return
+  killPlayer(knight.id)
+  addRefereeMessage(`${knight.playerNumber}号骑士翻牌决斗${target.playerNumber}号。`)
+  if (isWolfRole(target)) {
+    killPlayer(target.id)
+    dayInterrupted.value = true
+    addRefereeMessage(`${target.playerNumber}号是狼人阵营，骑士决斗成功，立即进入黑夜。`)
+    await resolveDeathEffects(target, version, 'knight')
+  } else {
+    addRefereeMessage(`${target.playerNumber}号是好人，骑士决斗失败，骑士出局，白天继续。`)
+  }
+  await resolveDeathEffects(knight, version, 'knight')
 }
 
 const collectVoteRound = async (version, candidateIds = null, label = '公投') => {
@@ -1258,7 +1598,10 @@ const collectVoteRound = async (version, candidateIds = null, label = '公投') 
     addGameMessage({ sender: `${voter.playerNumber}号 ${voter.playerName}`, content: `投给${target.playerNumber}号${target.playerName}`, type: 'vote-action', visibility: 'private', privateFor: voter.id })
   }
   const counts = new Map()
-  ballots.forEach(ballot => counts.set(ballot.targetId, (counts.get(ballot.targetId) || 0) + 1))
+  ballots.forEach(ballot => {
+    const voter = players.value.find(player => player.id === ballot.voterId)
+    counts.set(ballot.targetId, (counts.get(ballot.targetId) || 0) + (voter?.isSheriff ? 1.5 : 1))
+  })
   const max = Math.max(0, ...counts.values())
   const leaders = [...counts.entries()].filter(([, count]) => count === max).map(([id]) => id)
   voteHistory.value.push({ day: currentDay.value, label, ballots, leaders })
@@ -1267,9 +1610,17 @@ const collectVoteRound = async (version, candidateIds = null, label = '公投') 
   return { ballots, leaders, max }
 }
 
-const giveLastWords = async (player, version) => {
+const giveLastWords = async (player, version, reason = 'exile') => {
   if (!player || !isLoopActive(version)) return
-  addRefereeMessage(`${player.playerNumber}号${player.playerName}被公投出局，请发表遗言。`)
+  if (reason === 'exile' && (currentDay.value !== 1 || lastWordsGiven.value)) {
+    addRefereeMessage(`${player.playerNumber}号出局，本局遗言名额已使用，不再发表遗言。`)
+    return
+  }
+  if (reason === 'night' && (currentRound.value !== 1 || Number(boardRules.value.players) !== 12 || lastWordsGiven.value)) return
+  lastWordsGiven.value = true
+  addRefereeMessage(reason === 'night'
+    ? `${player.playerNumber}号${player.playerName}是首夜出局玩家，请发表遗言。`
+    : `${player.playerNumber}号${player.playerName}被公投出局，请发表遗言。`)
   startPlayerSpeaking(player.id)
   const result = await generatePublicSpeech(player, 'lastWords')
   recordPrivateThinking(player, result.thinking, '遗言')
@@ -1280,6 +1631,8 @@ const giveLastWords = async (player, version) => {
 
 const runVotePhase = async (version) => {
   currentPhase.value = 'vote'
+  await runKnightAction(version)
+  if (dayInterrupted.value || !isLoopActive(version)) return
   addRefereeMessage('主持人发起放逐投票。所有存活玩家必须私下提交一名放逐目标，不得弃票。')
   let result = await collectVoteRound(version)
   if (!isLoopActive(version) || !result.leaders.length) {
@@ -1306,8 +1659,9 @@ const runVotePhase = async (version) => {
   }
   const exiled = players.value.find(player => player.id === exileId)
   killPlayer(exileId)
+  lastExiledPlayerId.value = exileId
   await giveLastWords(exiled, version)
-  await resolveHunterSkill(exiled, version, 'exile')
+  await resolveDeathEffects(exiled, version, 'exile')
 }
 
 const runGameLoop = async (version) => {
@@ -1323,8 +1677,20 @@ const runGameLoop = async (version) => {
       await announceDay(version)
       if (checkGameEnd() || !isLoopActive(version)) break
       await waitWhilePaused()
+      if (boardRules.value.sheriff && !sheriffElectionDone.value) {
+        await runSheriffElection(version)
+        if (checkGameEnd() || !isLoopActive(version)) break
+      }
       await runSpeechPhase(version)
       if (!isLoopActive(version)) break
+      if (dayInterrupted.value) {
+        if (checkGameEnd() || !isLoopActive(version)) break
+        dayInterrupted.value = false
+        currentRound.value++
+        currentDay.value++
+        await phaseDelay(700)
+        continue
+      }
       await waitWhilePaused()
       await runVotePhase(version)
       if (checkGameEnd() || !isLoopActive(version)) break

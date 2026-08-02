@@ -63,6 +63,15 @@ public class GameRoomController {
     }
 
     /**
+     * 获取大厅房间列表。创建后的房间即使已开始或结束，也应能在大厅中追踪。
+     */
+    @GetMapping("/list")
+    public Map<String, Object> getRoomList() {
+        List<GameRoom> rooms = gameRoomService.getAllRooms();
+        return Map.of("code", 200, "data", rooms);
+    }
+
+    /**
      * 更新房间状态
      */
     @PutMapping("/updateStatus")

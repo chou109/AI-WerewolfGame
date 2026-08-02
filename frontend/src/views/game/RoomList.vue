@@ -10,7 +10,7 @@
     </section>
 
     <section class="hall-toolbar">
-      <div class="hall-filter"><span class="filter-dot"></span>{{ $locale === 'zh-CN' ? '开放房间' : 'OPEN ROOMS' }}</div>
+      <div class="hall-filter"><span class="filter-dot"></span>{{ $locale === 'zh-CN' ? '全部房间' : 'ALL TABLES' }}</div>
       <div class="room-total">{{ rooms.length }} {{ $locale === 'zh-CN' ? '张圆桌' : 'TABLES' }}</div>
     </section>
 

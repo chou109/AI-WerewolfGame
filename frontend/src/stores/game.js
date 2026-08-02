@@ -23,7 +23,8 @@ export const useGameStore = defineStore('game', {
   actions: {
     async fetchRooms() {
       try {
-        const response = await axios.get('/game/room/available')
+        // 大厅展示完整生命周期，避免创建后开始游戏导致房间从列表中消失。
+        const response = await axios.get('/game/room/list')
         if (response.data.code === 200) {
           this.rooms = response.data.data
         }
@@ -36,6 +37,7 @@ export const useGameStore = defineStore('game', {
         const response = await axios.post('/game/room/create', roomData)
         if (response.data.code === 200) {
           this.currentRoom = response.data.data
+          this.rooms = [this.currentRoom, ...this.rooms.filter(room => room.id !== this.currentRoom.id)]
           return true
         }
         return false

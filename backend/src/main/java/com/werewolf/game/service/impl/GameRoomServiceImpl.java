@@ -44,8 +44,18 @@ public class GameRoomServiceImpl extends ServiceImpl<GameRoomMapper, GameRoom> i
     }
 
     @Override
+    public List<GameRoom> getAllRooms() {
+        return lambdaQuery()
+                .orderByDesc(GameRoom::getCreateTime)
+                .list();
+    }
+
+    @Override
     public List<GameRoom> getAvailableRooms() {
-        return lambdaQuery().eq(GameRoom::getStatus, 1).list();
+        return lambdaQuery()
+                .eq(GameRoom::getStatus, 1)
+                .orderByDesc(GameRoom::getCreateTime)
+                .list();
     }
 
     @Override

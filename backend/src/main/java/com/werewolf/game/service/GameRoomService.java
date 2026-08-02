@@ -25,7 +25,12 @@ public interface GameRoomService extends IService<GameRoom> {
     boolean updateRoomStatus(Long roomId, Integer status);
 
     /**
-     * 获取所有可用房间
+     * 获取房间大厅列表（包含等待中、进行中和已结束房间）
+     */
+    List<GameRoom> getAllRooms();
+
+    /**
+     * 兼容旧接口：获取等待中的房间
      */
     List<GameRoom> getAvailableRooms();
 
