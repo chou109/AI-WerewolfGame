@@ -87,7 +87,22 @@ const boards = computed(() => [
   { value: 'miracle_merchant', count: '12', mark: '✦', label: $t('gameBoard.miracle_merchant'), desc: $locale === 'zh-CN' ? '奇迹商人带来的变量' : 'Unpredictability from the Merchant' },
   { value: 'wolf_beauty_knight', count: '12', mark: '✧', label: $t('gameBoard.wolf_beauty_knight'), desc: $locale === 'zh-CN' ? '狼美人与骑士的抉择' : 'Choices of Beauty and Knight' },
   { value: 'white_wolf_knight', count: '12', mark: '⚜', label: $t('gameBoard.white_wolf_knight'), desc: $locale === 'zh-CN' ? '白狼王的终局威胁' : 'The White Wolf endgame threat' },
-  { value: 'gargoyle_gravedigger', count: '12', mark: '◇', label: $t('gameBoard.gargoyle_gravedigger'), desc: $locale === 'zh-CN' ? '石像鬼与守墓人的信息战' : 'Gargoyle and Gravedigger information war' }
+  { value: 'gargoyle_gravedigger', count: '12', mark: '◇', label: $t('gameBoard.gargoyle_gravedigger'), desc: $locale === 'zh-CN' ? '石像鬼与守墓人的信息战' : 'Gargoyle and Gravedigger information war' },
+  { value: 'seer_witch_hunter_idiot', count: '12', mark: '♙', label: $t('gameBoard.seer_witch_hunter_idiot'), desc: $locale === 'zh-CN' ? '预女猎白经典平衡场' : 'Classic Seer Witch Hunter Idiot' },
+  { value: 'stalker_silencer', count: '12', mark: '⌁', label: $t('gameBoard.stalker_silencer'), desc: $locale === 'zh-CN' ? '潜行刺杀与禁言控制' : 'Stalker strikes and silencer control' },
+  { value: 'bear_hunter_idiot', count: '12', mark: '◉', label: $t('gameBoard.bear_hunter_idiot'), desc: $locale === 'zh-CN' ? '熊咆哮的邻座推理' : 'Bear roar adjacency reads' },
+  { value: 'nightmare_guard', count: '12', mark: '☾', label: $t('gameBoard.nightmare_guard'), desc: $locale === 'zh-CN' ? '梦魇封锁夜间技能' : 'Nightmare ability lock' },
+  { value: 'evil_knight', count: '12', mark: '☠', label: $t('gameBoard.evil_knight'), desc: $locale === 'zh-CN' ? '恶灵骑士反伤地雷' : 'Evil Knight retaliation trap' },
+  { value: 'magician_wolfking', count: '12', mark: '🃏', label: $t('gameBoard.magician_wolfking'), desc: $locale === 'zh-CN' ? '魔术师交换目标' : 'Magician target swaps' },
+  { value: 'medium_mechanical_wolf', count: '12', mark: '⌘', label: $t('gameBoard.medium_mechanical_wolf'), desc: $locale === 'zh-CN' ? '通灵师与机械狼复制' : 'Medium and Mechanical Wolf' },
+  { value: 'black_death', count: '12', mark: '✖', label: $t('gameBoard.black_death'), desc: $locale === 'zh-CN' ? '没有狼人的黑死病谜局' : 'The no-wolf Black Death' },
+  { value: 'bomber', count: '12', mark: '▣', label: $t('gameBoard.bomber'), desc: $locale === 'zh-CN' ? '炸弹人反制冲票' : 'Bomber vote retaliation' },
+  { value: 'sun_moon', count: '12', mark: '☼', label: $t('gameBoard.sun_moon'), desc: $locale === 'zh-CN' ? '日月改变轮次节奏' : 'Sun and Moon tempo shifts' },
+  { value: 'cupid', count: '12', mark: '♡', label: $t('gameBoard.cupid'), desc: $locale === 'zh-CN' ? '丘比特情侣与人狼恋' : 'Cupid lovers and mixed love' },
+  { value: 'wolf_brothers', count: '12', mark: '♞', label: $t('gameBoard.wolf_brothers'), desc: $locale === 'zh-CN' ? '狼兄狼弟影子刺客' : 'Wolf Brothers shadow assassin' },
+  { value: 'janus', count: '12', mark: '⧉', label: $t('gameBoard.janus'), desc: $locale === 'zh-CN' ? '千面人首夜选身份' : 'Janus first-night choice' },
+  { value: 'cursed_fox', count: '12', mark: '🦊', label: $t('gameBoard.cursed_fox'), desc: $locale === 'zh-CN' ? '咒狐独立存活' : 'Cursed Fox solo survival' },
+  { value: 'shapeshifter_wolfking', count: '12', mark: '⟲', label: $t('gameBoard.shapeshifter_wolfking'), desc: $locale === 'zh-CN' ? '百变狼王随机变异' : 'Random Shapeshifter Wolf King' }
 ])
 
 const selectedBoard = computed(() => boards.value.find(board => board.value === form.gameBoard) || boards.value[0])

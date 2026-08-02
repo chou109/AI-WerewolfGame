@@ -286,6 +286,18 @@ function createEmptyNightState() {
     gravediggerResult: null,
     seerTargetId: null,
     seerResult: null,
+    nightmareTargetId: null,
+    silencerTargetId: null,
+    magicianSwapIds: [],
+    mechanicalWolfTargetId: null,
+    mechanicalWolfRole: null,
+    mediumTargetId: null,
+    mediumResult: null,
+    dreamerTargetId: null,
+    evilKnightSeerReflected: false,
+    evilKnightPoisonReflected: false,
+    cursedFoxSeerTargetId: null,
+    wolvesBlocked: false,
     deaths: [],
     explanation: ''
   }
@@ -328,8 +340,26 @@ const sheriffElectionDone = ref(false)
 const lastExiledPlayerId = ref(null)
 const lastWordsGiven = ref(false)
 const dayInterrupted = ref(false)
+const silencedPlayerId = ref(null)
+const bonusDayPending = ref(0)
+const bonusNightPending = ref(0)
 const miracleMerchantState = reactive({ used: false, merchantId: null, luckyId: null, skill: null, pendingDeath: false })
 const wolfBeautyState = reactive({ previousTargetId: null, targetId: null })
+const idiotFlippedIds = new Set()
+const bomberSuppressedIds = new Set()
+const specialDeathProcessedIds = new Set()
+const stalkerState = reactive({ used: false, pendingTargetId: null })
+const silencerState = reactive({ previousTargetId: null })
+const nightmareState = reactive({ previousTargetId: null })
+const magicianState = reactive({ previousPair: '' })
+const cupidState = reactive({ used: false, pairIds: [], resolving: false, mixed: false })
+const wolfBrotherState = reactive({ brotherId: null, sisterId: null, awakened: false, awakenRound: null })
+const janusState = reactive({ used: false, playerId: null, chosenRole: null })
+const mechanicalWolfState = reactive({ learnedRole: null, playerId: null })
+const dreamerState = reactive({ previousTargetId: null, currentTargetId: null })
+const evilKnightState = reactive({ seerReflected: false, witchReflected: false })
+const shapeshifterState = reactive({ playerId: null, originalRole: null })
+const cursedFoxState = reactive({ playerId: null, killedBySeer: false })
 const lastApiRequestTime = ref(0)
 const API_REQUEST_INTERVAL = 1200
 const aiConfigCache = new Map()
@@ -374,7 +404,26 @@ const roleAliases = {
   miracle: ['奇迹商人'],
   gargoyle: ['石像鬼'],
   gravedigger: ['守墓人'],
-  knight: ['骑士']
+  knight: ['骑士'],
+  idiot: ['白痴'],
+  stalker: ['潜行者'],
+  silencer: ['禁言长老'],
+  bear: ['熊'],
+  nightmare: ['梦魇'],
+  evilKnight: ['恶灵骑士'],
+  magician: ['魔术师'],
+  mechanicalWolf: ['机械狼'],
+  medium: ['通灵师'],
+  bomber: ['炸弹人'],
+  sun: ['太阳'],
+  moon: ['月亮'],
+  cupid: ['丘比特'],
+  wolfBrother: ['狼兄'],
+  wolfSister: ['狼弟'],
+  janus: ['千面人'],
+  cursedFox: ['咒狐'],
+  shapeshifter: ['百变狼王'],
+  dreamer: ['摄梦人']
 }
 const phaseLabel = computed(() => {
   const zh = currentLocale() === 'zh-CN'
@@ -388,6 +437,14 @@ const phaseLabel = computed(() => {
     night_wolf_beauty: zh ? '狼美人行动' : 'Wolf Beauty action',
     night_witch: zh ? '女巫行动' : 'Witch action',
     night_seer: zh ? '预言家行动' : 'Seer action',
+    night_nightmare: zh ? '梦魇行动' : 'Nightmare action',
+    night_silencer: zh ? '禁言长老行动' : 'Silencer action',
+    night_magician: zh ? '魔术师行动' : 'Magician action',
+    night_mechanical_wolf: zh ? '机械狼行动' : 'Mechanical Wolf action',
+    night_medium: zh ? '通灵师行动' : 'Medium action',
+    night_cupid: zh ? '丘比特行动' : 'Cupid action',
+    night_janus: zh ? '千面人行动' : 'Janus action',
+    night_dreamer: zh ? '摄梦人行动' : 'Dreamer action',
     day: $t('gamePlay.dayPhase'),
     sheriff: zh ? '警长竞选' : 'Sheriff election',
     speak: $t('gamePlay.speakPhase'),
@@ -445,7 +502,7 @@ const canSpeak = computed(() => {
 
 // Helpers
 const getRoleName = (role) => {
-  const m = { '狼人':'gamePlay.role.werewolf','狼王':'gamePlay.role.wolfKing','狼美人':'gamePlay.role.wolfBeauty','白狼王':'gamePlay.role.whiteWolf','石像鬼':'gamePlay.role.gargoyle','平民':'gamePlay.role.villager','预言家':'gamePlay.role.seer','女巫':'gamePlay.role.witch','猎人':'gamePlay.role.hunter','守卫':'gamePlay.role.guard','奇迹商人':'gamePlay.role.miracleMerchant','守墓人':'gamePlay.role.gravekeeper','愚者':'gamePlay.role.fool','骑士':'gamePlay.role.knight' }
+  const m = { '狼人':'gamePlay.role.werewolf','狼王':'gamePlay.role.wolfKing','狼美人':'gamePlay.role.wolfBeauty','白狼王':'gamePlay.role.whiteWolf','石像鬼':'gamePlay.role.gargoyle','平民':'gamePlay.role.villager','预言家':'gamePlay.role.seer','女巫':'gamePlay.role.witch','猎人':'gamePlay.role.hunter','守卫':'gamePlay.role.guard','奇迹商人':'gamePlay.role.miracleMerchant','守墓人':'gamePlay.role.gravekeeper','愚者':'gamePlay.role.fool','骑士':'gamePlay.role.knight','白痴':'gamePlay.role.idiot','潜行者':'gamePlay.role.stalker','禁言长老':'gamePlay.role.silencer','熊':'gamePlay.role.bear','梦魇':'gamePlay.role.nightmare','恶灵骑士':'gamePlay.role.evilKnight','魔术师':'gamePlay.role.magician','机械狼':'gamePlay.role.mechanicalWolf','通灵师':'gamePlay.role.medium','炸弹人':'gamePlay.role.bomber','太阳':'gamePlay.role.sun','月亮':'gamePlay.role.moon','丘比特':'gamePlay.role.cupid','狼兄':'gamePlay.role.wolfBrother','狼弟':'gamePlay.role.wolfSister','千面人':'gamePlay.role.janus','咒狐':'gamePlay.role.cursedFox','百变狼王':'gamePlay.role.shapeshifter','摄梦人':'gamePlay.role.dreamer' }
   return m[role] ? $t(m[role]) : role
 }
 const getRoleClass = (role) => {
@@ -482,15 +539,29 @@ const hasRole = (player, key) => roleAliases[key]?.includes(player?.role)
 const isWolfRole = player => isWolfTeamRole(player?.role)
 const isPackWolf = player => isPackWolfRole(player?.role)
 const isBoard = key => boardRules.value.key === key
+const hasAbilityRole = (player, key) => hasRole(player, key) || (shapeshifterState.playerId === player?.id && roleAliases[key]?.includes(shapeshifterState.originalRole))
+const isNightmareDisabled = player => Boolean(player && nightState.nightmareTargetId === player.id)
+const swapNightTargetId = targetId => {
+  const [first, second] = nightState.magicianSwapIds || []
+  if (!targetId || !first || !second) return targetId
+  if (targetId === first) return second
+  if (targetId === second) return first
+  return targetId
+}
+const roleForSeer = player => {
+  if (hasRole(player, 'wolfSister') && wolfBrotherState.brotherId && players.value.find(p => p.id === wolfBrotherState.brotherId)?.isAlive && !wolfBrotherState.awakened) return '好人'
+  if (hasRole(player, 'mechanicalWolf') || isWolfRole(player)) return '狼人'
+  return '好人'
+}
 
 // Game setup
 const startGame = async () => {
   const required = roomInfo.value.playerCount || 12
   if (players.value.length < required) { ElMessage.warning($t('gamePlay.notEnoughPlayers', { count: required })); return }
   await loadGameData()
+  initializeGameState()
   await distributeRoles()
   players.value.forEach(p => { if (p.aiPlayerId) p.userId = -1 })
-  initializeGameState()
   await startGamePhase()
   gameStarted.value = true
   notifyPlayerRoles()
@@ -570,6 +641,23 @@ const distributeRoles = async () => {
   try {
     const bc = await loadBoardConfig(); const roles = []; bc.roles.forEach(rc => { for (let i = 0; i < rc.count; i++) roles.push(rc.role) })
     shuffleArray(roles); players.value.forEach((p, i) => { p.role = i < roles.length ? roles[i] : '平民' })
+    if (isBoard('shapeshifter_wolfking')) {
+      const candidates = players.value.filter(player => ['预言家', '女巫', '猎人', '摄梦人', '熊'].includes(player.role))
+      const chosen = randomItem(candidates)
+      if (chosen) {
+        shapeshifterState.playerId = chosen.id
+        shapeshifterState.originalRole = chosen.role
+        chosen.role = '百变狼王'
+        playerMemories[chosen.id]?.privateKnowledge.push(`你是百变狼王，本局复制的变异能力来自${shapeshifterState.originalRole}。`)
+        addRefereeMessage(`百变狼王已随机变异为${getRoleName(shapeshifterState.originalRole)}能力；真实身份仍属于狼人阵营。`, { visibility: 'god' })
+      }
+    }
+    const brother = players.value.find(player => hasRole(player, 'wolfBrother'))
+    const sister = players.value.find(player => hasRole(player, 'wolfSister'))
+    wolfBrotherState.brotherId = brother?.id || null
+    wolfBrotherState.sisterId = sister?.id || null
+    const fox = players.value.find(player => hasRole(player, 'cursedFox'))
+    cursedFoxState.playerId = fox?.id || null
     addRefereeMessage($t('gamePlay.rolesDistributed', { roles: bc.roles.map(r => `${getRoleName(r.role)}×${r.count}`).join('、') }))
   } catch (e) {}
 }
@@ -725,9 +813,27 @@ const killPlayer = (pid) => {
 }
 const checkGameEnd = () => {
   const alive = alivePlayers.value
+  const livingLovers = cupidState.pairIds.filter(id => alive.some(player => player.id === id))
+  if (cupidState.mixed && livingLovers.length === 2 && alive.length === 2) {
+    addRefereeMessage('人狼情侣存活到最后，第三方阵营获胜。')
+    gameStarted.value = false
+    phaseRunning.value = false
+    return true
+  }
+  const livingFox = alive.find(player => hasRole(player, 'cursedFox'))
+  if (livingFox && alive.length === 1) {
+    addRefereeMessage(`${livingFox.playerNumber}号咒狐独自存活到最后，咒狐获胜。`)
+    gameStarted.value = false
+    phaseRunning.value = false
+    return true
+  }
   const aw = alive.filter(isWolfRole).length
   const villagers = alive.filter(player => ['平民', 'Villager'].includes(player.role)).length
   const gods = alive.filter(player => !isWolfRole(player) && !['平民', 'Villager'].includes(player.role)).length
+  if (isBoard('black_death')) {
+    if (alive.length <= 2) { addRefereeMessage('黑死病无狼局结束：仅剩两名玩家，主持人公布本局实际没有狼人。'); gameStarted.value = false; phaseRunning.value = false; return true }
+    return false
+  }
   if (aw === 0) { addRefereeMessage($t('gamePlay.goodWin')); gameStarted.value = false; phaseRunning.value = false; return true }
   if (villagers === 0 || gods === 0) { addRefereeMessage($t('gamePlay.wolfWin')); gameStarted.value = false; phaseRunning.value = false; return true }
   if (!alivePlayers.value.length) { addRefereeMessage($t('gamePlay.allDead')); gameStarted.value = false; phaseRunning.value = false; return true }
@@ -767,6 +873,24 @@ const initializeGameState = () => {
   lastExiledPlayerId.value = null
   lastWordsGiven.value = false
   dayInterrupted.value = false
+  silencedPlayerId.value = null
+  bonusDayPending.value = 0
+  bonusNightPending.value = 0
+  idiotFlippedIds.clear()
+  bomberSuppressedIds.clear()
+  specialDeathProcessedIds.clear()
+  Object.assign(stalkerState, { used: false, pendingTargetId: null })
+  Object.assign(silencerState, { previousTargetId: null })
+  Object.assign(nightmareState, { previousTargetId: null })
+  Object.assign(magicianState, { previousPair: '' })
+  Object.assign(cupidState, { used: false, pairIds: [], resolving: false, mixed: false })
+  Object.assign(wolfBrotherState, { brotherId: null, sisterId: null, awakened: false, awakenRound: null })
+  Object.assign(janusState, { used: false, playerId: null, chosenRole: null })
+  Object.assign(mechanicalWolfState, { learnedRole: null, playerId: null })
+  Object.assign(dreamerState, { previousTargetId: null, currentTargetId: null })
+  Object.assign(evilKnightState, { seerReflected: false, witchReflected: false })
+  Object.assign(shapeshifterState, { playerId: null, originalRole: null })
+  Object.assign(cursedFoxState, { playerId: null, killedBySeer: false })
   Object.assign(miracleMerchantState, { used: false, merchantId: null, luckyId: null, skill: null, pendingDeath: false })
   Object.assign(wolfBeautyState, { previousTargetId: null, targetId: null })
   witchInventory.antidote = 1
@@ -868,6 +992,8 @@ const callStructuredAi = async (config, systemPrompt, userPrompt) => {
 }
 
 const roleVictoryCondition = (player, language) => {
+  if (hasRole(player, 'cursedFox')) return language === 'en-US' ? 'Survive alone as the final living player.' : '独自存活到最后'
+  if (cupidState.mixed && cupidState.pairIds.includes(player.id)) return language === 'en-US' ? 'As a mixed-alignment lover pair, eliminate every other player.' : '作为人狼情侣第三方，清除除情侣外的所有玩家'
   if (language === 'en-US') return isWolfRole(player)
     ? 'The wolf team wins when every villager or every good special role is eliminated.'
     : 'The good team wins by eliminating every wolf-team role.'
@@ -971,6 +1097,20 @@ const buildDecisionPrompts = (player, action, extra, config) => {
   } else if (action === 'wolfKing') {
     instruction = `你符合狼王开枪条件，可带走一名存活玩家。可选：${extra.candidates}。JSON：{"thinking":"私密开枪策略","target":玩家编号}`
   }
+  if (!instruction && ['nightmare', 'silencer', 'magician', 'mechanicalWolf', 'medium', 'cupid', 'janus', 'dreamer', 'stalker'].includes(action)) {
+    const labels = {
+      nightmare: 'Choose one player to fear; their night ability is disabled and the previous target cannot repeat.',
+      silencer: 'Choose one player to silence tomorrow; the previous target cannot repeat.',
+      magician: 'Choose two different living players whose night targets will be swapped; do not repeat the same pair.',
+      mechanicalWolf: 'Learn one living player exact role and choose a copied skill: check, poison, or guard.',
+      medium: 'Choose one living player and learn their exact role.',
+      cupid: 'On the first night choose two different living players to link as lovers.',
+      janus: 'On the first night choose one role card; if a wolf card is present, you must choose wolf.',
+      dreamer: 'Choose one living player to dream. Dreaming the same player on consecutive nights eliminates that player.',
+      stalker: 'Decide whether to use the once-per-game assassination on the player you voted for who survived exile.'
+    }
+    instruction = `${labels[action]} Candidates: ${extra.candidates || 'provided by moderator'}. JSON: {"thinking":"private strategy","use":true,"target":number|null,"target2":number|null,"skill":"check|poison|guard","role":"wolf|villager|seer|witch|hunter"}`
+  }
   return { language, systemPrompt, userPrompt: `${base}\n${instruction}` }
 }
 
@@ -1016,16 +1156,16 @@ const runGrantedSkillAction = async (version, lucky, skill) => {
   recordPrivateThinking(lucky, decision.thinking, `幸运儿${skill}`)
   const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
   if (!target) return
-  nightState.miracleSkillTargetId = target.id
+  nightState.miracleSkillTargetId = swapNightTargetId(target.id)
   if (skill === 'check') {
     const result = isWolfRole(target) ? '狼人' : '好人'
     playerMemories[lucky.id].privateKnowledge.push(`奇迹查验${target.playerNumber}号，结果为${result}`)
     addGameMessage({ sender: `${lucky.playerNumber}号幸运儿`, content: `一次性查验${target.playerNumber}号：${result}`, type: 'night-action', visibility: 'private', privateFor: lucky.id })
   } else if (skill === 'poison') {
-    nightState.miraclePoisonTargetId = target.id
+    nightState.miraclePoisonTargetId = swapNightTargetId(target.id)
     addGameMessage({ sender: `${lucky.playerNumber}号幸运儿`, content: `对${target.playerNumber}号使用一次性毒药`, type: 'night-action', visibility: 'private', privateFor: lucky.id })
   } else {
-    nightState.miracleGuardTargetId = target.id
+    nightState.miracleGuardTargetId = swapNightTargetId(target.id)
     addGameMessage({ sender: `${lucky.playerNumber}号幸运儿`, content: `一次性守护${target.playerNumber}号`, type: 'night-action', visibility: 'private', privateFor: lucky.id })
   }
   await phaseDelay()
@@ -1053,6 +1193,181 @@ const runMiracleMerchantAction = async version => {
   await runGrantedSkillAction(version, lucky, skill)
 }
 
+const runNightmareAction = async version => {
+  currentPhase.value = 'night_nightmare'
+  if (!isBoard('nightmare_guard')) return
+  const nightmare = alivePlayers.value.find(player => hasRole(player, 'nightmare'))
+  if (!nightmare || !isLoopActive(version)) return
+  const candidates = alivePlayers.value.filter(player => player.id !== nightmare.id && player.id !== nightmareState.previousTargetId)
+  if (!candidates.length) return
+  const decision = await requestPlayerDecision(nightmare, 'nightmare', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(nightmare, decision.thinking, '梦魇恐惧')
+  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  nightmareState.previousTargetId = target?.id || null
+  nightState.nightmareTargetId = target?.id || null
+  nightState.wolvesBlocked = Boolean(target && isWolfRole(target))
+  if (target) addRefereeMessage(`梦魇恐惧了${target.playerNumber}号；该玩家本夜技能失效。`, { visibility: 'god' })
+  await phaseDelay()
+}
+
+const runSilencerAction = async version => {
+  currentPhase.value = 'night_silencer'
+  if (!isBoard('stalker_silencer')) return
+  const silencer = alivePlayers.value.find(player => hasRole(player, 'silencer'))
+  if (!silencer || !isLoopActive(version)) return
+  const candidates = alivePlayers.value.filter(player => player.id !== silencer.id && player.id !== silencerState.previousTargetId)
+  if (!candidates.length) return
+  const decision = await requestPlayerDecision(silencer, 'silencer', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(silencer, decision.thinking, '禁言长老')
+  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  silencerState.previousTargetId = target?.id || null
+  nightState.silencerTargetId = target?.id || null
+  silencedPlayerId.value = target?.id || null
+  if (target) addRefereeMessage(`禁言长老选择了${target.playerNumber}号，明天该玩家不能发言。`, { visibility: 'god' })
+  await phaseDelay()
+}
+
+const runMagicianAction = async version => {
+  currentPhase.value = 'night_magician'
+  if (!isBoard('magician_wolfking')) return
+  const magician = alivePlayers.value.find(player => hasRole(player, 'magician'))
+  if (!magician || !isLoopActive(version)) return
+  const candidates = [...alivePlayers.value]
+  const decision = await requestPlayerDecision(magician, 'magician', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(magician, decision.thinking, '魔术师交换')
+  const first = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  const secondCandidates = candidates.filter(player => player.id !== first?.id)
+  const second = resolvePlayerTarget(decision.target2, secondCandidates) || randomItem(secondCandidates)
+  if (!first || !second) return
+  const pair = [first.id, second.id].sort().join(':')
+  if (pair === magicianState.previousPair) {
+    addRefereeMessage('魔术师不能连续两晚交换同一对，本晚交换无效。', { visibility: 'god' })
+    return
+  }
+  magicianState.previousPair = pair
+  nightState.magicianSwapIds = [first.id, second.id]
+  addRefereeMessage(`魔术师交换了${first.playerNumber}号与${second.playerNumber}号的本夜目标。`, { visibility: 'god' })
+  await phaseDelay()
+}
+
+const runCupidAction = async version => {
+  currentPhase.value = 'night_cupid'
+  if (!isBoard('cupid') || cupidState.used) return
+  const cupid = alivePlayers.value.find(player => hasRole(player, 'cupid'))
+  if (!cupid || !isLoopActive(version)) return
+  const candidates = alivePlayers.value.filter(player => player.id !== cupid.id)
+  const decision = await requestPlayerDecision(cupid, 'cupid', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(cupid, decision.thinking, '丘比特连情侣')
+  const first = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  const secondCandidates = candidates.filter(player => player.id !== first?.id)
+  const second = resolvePlayerTarget(decision.target2, secondCandidates) || randomItem(secondCandidates)
+  if (!first || !second) return
+  Object.assign(cupidState, { used: true, pairIds: [first.id, second.id], mixed: isWolfRole(first) !== isWolfRole(second) })
+  playerMemories[first.id]?.privateKnowledge.push(`你与${second.playerNumber}号成为情侣，任何一方死亡你都会殉情。`)
+  playerMemories[second.id]?.privateKnowledge.push(`你与${first.playerNumber}号成为情侣，任何一方死亡你都会殉情。`)
+  addRefereeMessage(`丘比特已连接${first.playerNumber}号与${second.playerNumber}号为情侣；双方已私下互认。`, { visibility: 'god' })
+  await phaseDelay()
+}
+
+const runJanusAction = async version => {
+  currentPhase.value = 'night_janus'
+  if (!isBoard('janus') || janusState.used) return
+  const janus = alivePlayers.value.find(player => hasRole(player, 'janus'))
+  if (!janus || !isLoopActive(version)) return
+  const cards = shuffleArray(['狼人', '平民', '预言家', '女巫', '猎人']).slice(0, 2)
+  const hasWolfCard = cards.some(role => isWolfTeamRole(role))
+  const candidates = cards.map((role, index) => `${index + 1}号牌:${getRoleName(role)}`).join('、')
+  const decision = await requestPlayerDecision(janus, 'janus', { candidates })
+  recordPrivateThinking(janus, decision.thinking, '千面人选牌')
+  let chosenRole = Number(decision.target) === 2 ? cards[1] : cards[0]
+  if (hasWolfCard) chosenRole = cards.find(role => isWolfTeamRole(role)) || chosenRole
+  janusState.used = true
+  janusState.playerId = janus.id
+  janusState.chosenRole = chosenRole
+  janus.role = chosenRole
+  addRefereeMessage(`千面人已完成首夜选牌，成为${getRoleName(chosenRole)}。`, { visibility: 'god' })
+  await phaseDelay()
+}
+
+const runMechanicalWolfAction = async version => {
+  currentPhase.value = 'night_mechanical_wolf'
+  if (!isBoard('medium_mechanical_wolf')) return
+  const wolf = alivePlayers.value.find(player => hasRole(player, 'mechanicalWolf'))
+  if (!wolf || !isLoopActive(version)) return
+  const candidates = alivePlayers.value.filter(player => player.id !== wolf.id)
+  const decision = await requestPlayerDecision(wolf, 'mechanicalWolf', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(wolf, decision.thinking, '机械狼学习')
+  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  if (!target) return
+  const learnedRole = target.role
+  Object.assign(mechanicalWolfState, { learnedRole, playerId: wolf.id })
+  nightState.mechanicalWolfTargetId = target.id
+  nightState.mechanicalWolfRole = learnedRole
+  playerMemories[wolf.id]?.privateKnowledge.push(`本夜学习${target.playerNumber}号的具体身份：${learnedRole}`)
+  if (hasRole(target, 'seer')) {
+    const copied = randomItem(alivePlayers.value.filter(player => player.id !== wolf.id))
+    if (copied) playerMemories[wolf.id]?.privateKnowledge.push(`复制预言家查验：${copied.playerNumber}号为${roleForSeer(copied)}`)
+  } else if (hasRole(target, 'guard')) {
+    const guardTarget = randomItem(alivePlayers.value.filter(player => player.id !== wolf.id))
+    nightState.miracleGuardTargetId = guardTarget?.id || null
+  } else if (hasRole(target, 'witch')) {
+    const poisonTarget = randomItem(alivePlayers.value.filter(player => player.id !== wolf.id))
+    nightState.miraclePoisonTargetId = poisonTarget?.id || null
+  }
+  addRefereeMessage(`机械狼本夜学习了${target.playerNumber}号的具体身份，并尝试复制其技能。`, { visibility: 'god' })
+  await phaseDelay()
+}
+
+const runMediumAction = async version => {
+  currentPhase.value = 'night_medium'
+  if (!isBoard('medium_mechanical_wolf')) return
+  const medium = alivePlayers.value.find(player => hasRole(player, 'medium'))
+  if (!medium || !isLoopActive(version)) return
+  const candidates = alivePlayers.value.filter(player => player.id !== medium.id)
+  if (!candidates.length) return
+  const decision = await requestPlayerDecision(medium, 'medium', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(medium, decision.thinking, '通灵师查验')
+  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  if (!target) return
+  const result = hasRole(target, 'mechanicalWolf') ? '狼人' : target.role
+  nightState.mediumTargetId = target.id
+  nightState.mediumResult = result
+  playerMemories[medium.id]?.privateKnowledge.push(`通灵师查验${target.playerNumber}号，具体身份为${result}`)
+  addGameMessage({ sender: `${medium.playerNumber}号通灵师`, content: `查验${target.playerNumber}号：${result}`, type: 'night-action', visibility: 'private', privateFor: medium.id })
+  await phaseDelay()
+}
+
+const runDreamerAction = async version => {
+  currentPhase.value = 'night_dreamer'
+  if (!isBoard('shapeshifter_wolfking')) return
+  const dreamer = alivePlayers.value.find(player => hasAbilityRole(player, 'dreamer'))
+  if (!dreamer || !isLoopActive(version)) return
+  const candidates = alivePlayers.value.filter(player => player.id !== dreamer.id)
+  if (!candidates.length) return
+  const decision = await requestPlayerDecision(dreamer, 'dreamer', { candidates: candidates.map(player => `${player.playerNumber}号`).join('、') })
+  recordPrivateThinking(dreamer, decision.thinking, '摄梦人行动')
+  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
+  dreamerState.previousTargetId = dreamerState.currentTargetId
+  dreamerState.currentTargetId = target?.id || null
+  nightState.dreamerTargetId = target?.id || null
+  if (target) addRefereeMessage(`摄梦人选择了${target.playerNumber}号；连续两夜摄梦同一目标会令其出局。`, { visibility: 'god' })
+  await phaseDelay()
+}
+
+const revealWolfBrotherKnowledge = () => {
+  const brother = players.value.find(player => player.id === wolfBrotherState.brotherId)
+  const sister = players.value.find(player => player.id === wolfBrotherState.sisterId)
+  if (brother && sister && brother.isAlive && sister.isAlive && currentRound.value === 1) {
+    playerMemories[brother.id]?.privateKnowledge.push(`你的狼弟是${sister.playerNumber}号，首夜已互认。`)
+    playerMemories[sister.id]?.privateKnowledge.push(`你的狼兄是${brother.playerNumber}号，首夜已互认。`)
+  }
+  if (brother && !brother.isAlive && sister?.isAlive && !wolfBrotherState.awakened) {
+    wolfBrotherState.awakened = true
+    wolfBrotherState.awakenRound = currentRound.value
+    playerMemories[sister.id]?.privateKnowledge.push('狼兄已经出局，从下一夜起你苏醒并可参与狼刀。')
+  }
+}
+
 const runWolfBeautyAction = async version => {
   currentPhase.value = 'night_wolf_beauty'
   if (!isBoard('wolf_beauty_knight')) return
@@ -1075,7 +1390,7 @@ const runGargoyleAction = async version => {
   currentPhase.value = 'night_gargoyle'
   if (!isBoard('gargoyle_gravedigger')) return
   const gargoyle = alivePlayers.value.find(player => hasRole(player, 'gargoyle'))
-  if (!gargoyle || !isLoopActive(version)) return
+  if (!gargoyle || !isLoopActive(version) || isNightmareDisabled(gargoyle)) return
   const checkedIds = (playerMemories[gargoyle.id]?.checks || []).map(check => check.targetId)
   const candidates = alivePlayers.value.filter(player => player.id !== gargoyle.id && !checkedIds.includes(player.id))
   if (!candidates.length) return
@@ -1084,11 +1399,13 @@ const runGargoyleAction = async version => {
   recordPrivateThinking(gargoyle, decision.thinking, '石像鬼查验')
   const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
   if (!target) return
-  nightState.gargoyleTargetId = target.id
-  nightState.gargoyleResult = target.role
-  playerMemories[gargoyle.id].checks.push({ day: currentDay.value, targetId: target.id, result: target.role })
-  playerMemories[gargoyle.id].privateKnowledge.push(`第${currentRound.value}夜查验${target.playerNumber}号，具体身份为${target.role}`)
-  addGameMessage({ sender: `${gargoyle.playerNumber}号石像鬼`, content: `查验${target.playerNumber}号：${target.role}`, type: 'night-action', visibility: 'private', privateFor: gargoyle.id })
+  const effectiveTargetId = swapNightTargetId(target.id)
+  const effectiveTarget = players.value.find(player => player.id === effectiveTargetId) || target
+  nightState.gargoyleTargetId = effectiveTarget.id
+  nightState.gargoyleResult = effectiveTarget.role
+  playerMemories[gargoyle.id].checks.push({ day: currentDay.value, targetId: effectiveTarget.id, result: effectiveTarget.role })
+  playerMemories[gargoyle.id].privateKnowledge.push(`第${currentRound.value}夜查验${effectiveTarget.playerNumber}号，具体身份为${effectiveTarget.role}`)
+  addGameMessage({ sender: `${gargoyle.playerNumber}号石像鬼`, content: `查验${effectiveTarget.playerNumber}号：${effectiveTarget.role}`, type: 'night-action', visibility: 'private', privateFor: gargoyle.id })
   await phaseDelay()
 }
 
@@ -1109,7 +1426,7 @@ const runGuardAction = async (version) => {
   currentPhase.value = 'night_guard'
   addRefereeMessage('守卫请睁眼并选择守护目标。', { visibility: 'god', detail: '可自守、可空守、不可连续两晚守同一人；同守同救判定死亡。' })
   const guard = alivePlayers.value.find(player => hasRole(player, 'guard'))
-  if (!guard || !isLoopActive(version)) {
+  if (!guard || !isLoopActive(version) || isNightmareDisabled(guard)) {
     addRefereeMessage('本局无存活守卫，跳过守卫行动。', { visibility: 'god' })
     return
   }
@@ -1118,7 +1435,7 @@ const runGuardAction = async (version) => {
   recordPrivateThinking(guard, decision.thinking, '守卫行动')
   const fallback = Math.random() < 0.12 ? null : randomItem(candidates)
   const target = resolvePlayerTarget(decision.target, candidates) || fallback
-  nightState.guardTargetId = target?.id || null
+  nightState.guardTargetId = target ? swapNightTargetId(target.id) : null
   lastGuardTargetId.value = nightState.guardTargetId
   addGameMessage({ sender: `${guard.playerNumber}号守卫`, content: target ? `守护${target.playerNumber}号${target.playerName}` : '选择空守', type: 'night-action', visibility: 'private', privateFor: guard.id })
   await phaseDelay()
@@ -1126,8 +1443,14 @@ const runGuardAction = async (version) => {
 
 const runWolfActions = async (version) => {
   currentPhase.value = 'night_wolf'
+  revealWolfBrotherKnowledge()
+  if (nightState.wolvesBlocked) {
+    addRefereeMessage('梦魇恐惧了狼人，狼队本夜空刀。', { visibility: 'god' })
+    await phaseDelay()
+    return
+  }
   addRefereeMessage('狼人请睁眼。每名狼人独立提交刀口，由上帝按多数票结算。', { visibility: 'god' })
-  const packWolves = alivePlayers.value.filter(isPackWolf)
+  const packWolves = alivePlayers.value.filter(player => isPackWolf(player) || (wolfBrotherState.awakened && hasRole(player, 'wolfSister')))
   const gargoyle = alivePlayers.value.find(player => hasRole(player, 'gargoyle'))
   const wolves = packWolves.length ? packWolves : (gargoyle ? [gargoyle] : [])
   const candidates = alivePlayers.value.filter(player => !isWolfRole(player) || (packWolves.length && hasRole(player, 'wolfKing')))
@@ -1149,7 +1472,7 @@ const runWolfActions = async (version) => {
   const maxVotes = Math.max(0, ...counts.values())
   const tiedIds = [...counts.entries()].filter(([, count]) => count === maxVotes).map(([id]) => id)
   nightState.wolfTieCandidates = tiedIds
-  nightState.wolfTargetId = randomItem(tiedIds)
+  nightState.wolfTargetId = swapNightTargetId(randomItem(tiedIds))
   const target = players.value.find(player => player.id === nightState.wolfTargetId)
   const ballot = nightState.wolfVotes.map(vote => `${getPlayerNumberById(vote.voterId)}号→${getPlayerNumberById(vote.targetId)}号`).join('，') || '无有效投票'
   addRefereeMessage(target ? `狼人最终刀口：${target.playerNumber}号${target.playerName}` : '狼人没有形成有效刀口。', {
@@ -1161,8 +1484,8 @@ const runWolfActions = async (version) => {
 
 const runWitchAction = async (version) => {
   currentPhase.value = 'night_witch'
-  const witch = alivePlayers.value.find(player => hasRole(player, 'witch'))
-  if (!witch || !isLoopActive(version)) {
+  const witch = alivePlayers.value.find(player => hasAbilityRole(player, 'witch'))
+  if (!witch || !isLoopActive(version) || isNightmareDisabled(witch)) {
     addRefereeMessage('本局无存活女巫，跳过女巫行动。', { visibility: 'god' })
     return
   }
@@ -1182,7 +1505,10 @@ const runWitchAction = async (version) => {
   if (!decision.poisonTarget && Math.random() >= 0.12) poisonTarget = null
   if (witchInventory.poison <= 0) poisonTarget = null
   if (nightState.witchSaved) poisonTarget = null
-  nightState.witchPoisonTargetId = poisonTarget?.id || null
+  const effectivePoisonId = poisonTarget ? swapNightTargetId(poisonTarget.id) : null
+  nightState.witchPoisonTargetId = effectivePoisonId
+  const effectivePoisonTarget = players.value.find(player => player.id === effectivePoisonId)
+  if (effectivePoisonTarget && hasRole(effectivePoisonTarget, 'evilKnight')) nightState.evilKnightPoisonReflected = true
   if (nightState.witchSaved) witchInventory.antidote--
   if (nightState.witchPoisonTargetId) witchInventory.poison--
   const actions = [nightState.witchSaved ? `对${wolfTarget.playerNumber}号使用解药` : '未使用解药']
@@ -1193,8 +1519,8 @@ const runWitchAction = async (version) => {
 
 const runSeerAction = async (version) => {
   currentPhase.value = 'night_seer'
-  const seer = alivePlayers.value.find(player => hasRole(player, 'seer'))
-  if (!seer || !isLoopActive(version)) {
+  const seer = alivePlayers.value.find(player => hasAbilityRole(player, 'seer'))
+  if (!seer || !isLoopActive(version) || isNightmareDisabled(seer)) {
     addRefereeMessage('本局无存活预言家，跳过查验。', { visibility: 'god' })
     return
   }
@@ -1206,12 +1532,16 @@ const runSeerAction = async (version) => {
   recordPrivateThinking(seer, decision.thinking, '预言家查验')
   const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
   if (!target) return
-  const result = wolfRolesArr.includes(target.role) ? '狼人' : '好人'
-  nightState.seerTargetId = target.id
+  const effectiveTargetId = swapNightTargetId(target.id)
+  const effectiveTarget = players.value.find(player => player.id === effectiveTargetId) || target
+  const result = roleForSeer(effectiveTarget)
+  nightState.seerTargetId = effectiveTarget.id
   nightState.seerResult = result
-  playerMemories[seer.id].checks.push({ day: currentDay.value, targetId: target.id, result })
-  playerMemories[seer.id].privateKnowledge.push(`第${currentRound.value}夜查验${target.playerNumber}号，结果为${result}`)
-  addGameMessage({ sender: `${seer.playerNumber}号预言家`, content: `查验${target.playerNumber}号${target.playerName}：${result}`, type: 'night-action', visibility: 'private', privateFor: seer.id })
+  playerMemories[seer.id].checks.push({ day: currentDay.value, targetId: effectiveTarget.id, result })
+  playerMemories[seer.id].privateKnowledge.push(`第${currentRound.value}夜查验${effectiveTarget.playerNumber}号，结果为${result}`)
+  addGameMessage({ sender: `${seer.playerNumber}号预言家`, content: `查验${effectiveTarget.playerNumber}号${effectiveTarget.playerName}：${result}`, type: 'night-action', visibility: 'private', privateFor: seer.id })
+  if (hasRole(effectiveTarget, 'evilKnight') && !evilKnightState.seerReflected) nightState.evilKnightSeerReflected = true
+  if (hasRole(effectiveTarget, 'cursedFox')) nightState.cursedFoxSeerTargetId = effectiveTarget.id
   await phaseDelay()
 }
 
@@ -1222,7 +1552,11 @@ const resolveNight = () => {
   const saved = Boolean(wolfTarget && nightState.witchSaved)
   let mainReason = '狼人没有形成有效刀口'
   if (wolfTarget) {
-    if (guarded && saved && gameRules.sameGuardAndSaveKills) {
+    if (hasRole(wolfTarget, 'cursedFox')) {
+      mainReason = `${wolfTarget.playerNumber}号咒狐免疫狼人夜刀`
+    } else if (hasRole(wolfTarget, 'evilKnight')) {
+      mainReason = `${wolfTarget.playerNumber}号恶灵骑士免疫夜间伤害`
+    } else if (guarded && saved && gameRules.sameGuardAndSaveKills) {
       deaths.add(wolfTarget.id)
       mainReason = `${wolfTarget.playerNumber}号同时被守卫守护和女巫解救，按“同守同救”规则仍然死亡`
     } else if (guarded) {
@@ -1234,13 +1568,32 @@ const resolveNight = () => {
       mainReason = `${wolfTarget.playerNumber}号遭狼人击杀且未获得有效保护`
     }
   }
-  const poisoned = players.value.filter(player => [nightState.witchPoisonTargetId, nightState.miraclePoisonTargetId].includes(player.id))
+  const poisoned = players.value.filter(player => [nightState.witchPoisonTargetId, nightState.miraclePoisonTargetId].includes(player.id) && !hasRole(player, 'evilKnight'))
   poisoned.forEach(player => deaths.add(player.id))
+  if (nightState.evilKnightSeerReflected && !evilKnightState.seerReflected && !evilKnightState.witchReflected) {
+    const seer = alivePlayers.value.find(player => hasAbilityRole(player, 'seer'))
+    if (seer) deaths.add(seer.id)
+    evilKnightState.seerReflected = true
+  }
+  if (nightState.evilKnightPoisonReflected && !evilKnightState.seerReflected && !evilKnightState.witchReflected) {
+    const witch = alivePlayers.value.find(player => hasAbilityRole(player, 'witch'))
+    if (witch) deaths.add(witch.id)
+    evilKnightState.witchReflected = true
+  }
+  if (nightState.cursedFoxSeerTargetId) {
+    deaths.add(nightState.cursedFoxSeerTargetId)
+    cursedFoxState.killedBySeer = true
+  }
+  if (dreamerState.currentTargetId && dreamerState.currentTargetId === dreamerState.previousTargetId) deaths.add(dreamerState.currentTargetId)
+  const dreamer = players.value.find(player => hasAbilityRole(player, 'dreamer'))
+  if (dreamer && deaths.has(dreamer.id) && dreamerState.currentTargetId) deaths.add(dreamerState.currentTargetId)
   if (miracleMerchantState.pendingDeath && miracleMerchantState.merchantId) deaths.add(miracleMerchantState.merchantId)
   nightState.deaths = [...deaths]
   const poisonDetail = poisoned.length ? `；毒药带走${poisoned.map(player => `${player.playerNumber}号`).join('、')}` : ''
   const merchantDetail = miracleMerchantState.pendingDeath ? '；幸运儿为狼人，奇迹商人遭受反噬出局' : ''
-  nightState.explanation = `${mainReason}${poisonDetail}${merchantDetail}`
+  const reflectionDetail = nightState.evilKnightSeerReflected || nightState.evilKnightPoisonReflected ? '；恶灵骑士触发一次性反伤' : ''
+  const foxDetail = nightState.cursedFoxSeerTargetId ? '；咒狐被查验后出局' : ''
+  nightState.explanation = `${mainReason}${poisonDetail}${merchantDetail}${reflectionDetail}${foxDetail}`
   if (!nightState.deaths.length) nightState.explanation = `平安夜：${mainReason}`
   addRefereeMessage('夜间行动结算完成。', { visibility: 'god', detail: nightState.explanation })
 }
@@ -1248,7 +1601,7 @@ const resolveNight = () => {
 const runNightPhase = async (version) => {
   currentPhase.value = 'night'
   resetNightState()
-  const actionLabels = { miracle: '奇迹商人', gravedigger: '守墓人', gargoyle: '石像鬼', guard: '守卫', wolves: '狼人', wolfBeauty: '狼美人', witch: '女巫', seer: '预言家' }
+  const actionLabels = { miracle: '奇迹商人', gravedigger: '守墓人', gargoyle: '石像鬼', guard: '守卫', wolves: '狼人', wolfBeauty: '狼美人', witch: '女巫', seer: '预言家', nightmare: '梦魇', silencer: '禁言长老', magician: '魔术师', mechanicalWolf: '机械狼', medium: '通灵师', cupid: '丘比特', janus: '千面人', dreamer: '摄梦人' }
   addRefereeMessage(currentLocale() === 'zh-CN'
     ? `第${currentRound.value}夜开始，天黑请闭眼。本板子行动顺序：${boardRules.value.nightOrder.map(action => actionLabels[action]).join('→')}。`
     : `Night ${currentRound.value} begins. Board action order: ${boardRules.value.nightOrder.join(' -> ')}.`)
@@ -1256,6 +1609,14 @@ const runNightPhase = async (version) => {
     miracle: () => runMiracleMerchantAction(version),
     gravedigger: () => runGravediggerAction(version),
     gargoyle: () => runGargoyleAction(version),
+    nightmare: () => runNightmareAction(version),
+    silencer: () => runSilencerAction(version),
+    magician: () => runMagicianAction(version),
+    mechanicalWolf: () => runMechanicalWolfAction(version),
+    medium: () => runMediumAction(version),
+    cupid: () => runCupidAction(version),
+    janus: () => runJanusAction(version),
+    dreamer: () => runDreamerAction(version),
     guard: () => runGuardAction(version),
     wolves: () => runWolfActions(version),
     wolfBeauty: () => runWolfBeautyAction(version),
@@ -1270,9 +1631,9 @@ const runNightPhase = async (version) => {
 }
 
 const resolveHunterSkill = async (hunter, version, cause) => {
-  if (!hunter || !hasRole(hunter, 'hunter') || hunterSkillUsed.has(hunter.id) || !isLoopActive(version)) return
+  if (!hunter || !hasAbilityRole(hunter, 'hunter') || hunterSkillUsed.has(hunter.id) || !isLoopActive(version) || bomberSuppressedIds.has(hunter.id)) return
   hunterSkillUsed.add(hunter.id)
-  if (cause === 'poison') {
+  if (cause === 'poison' || (cause === 'night' && isNightmareDisabled(hunter))) {
     addRefereeMessage(`${hunter.playerNumber}号${hunter.playerName}是猎人，但因被女巫毒杀不能发动技能。`)
     return
   }
@@ -1323,7 +1684,7 @@ const transferSheriffBadge = async (deadSheriff, version, consumed = false) => {
 }
 
 const resolveWolfKingSkill = async (wolfKing, version, cause) => {
-  if (!wolfKing || !hasRole(wolfKing, 'wolfKing') || wolfKingSkillUsed.has(wolfKing.id) || !isLoopActive(version)) return
+  if (!wolfKing || !hasRole(wolfKing, 'wolfKing') || wolfKingSkillUsed.has(wolfKing.id) || !isLoopActive(version) || bomberSuppressedIds.has(wolfKing.id)) return
   const allowed = ['exile', 'hunter', 'night'].includes(cause)
   if (!allowed) {
     addRefereeMessage('狼王本次死因不满足开枪条件，技能未发动。', { visibility: 'god', detail: `死因：${cause}` })
@@ -1352,11 +1713,40 @@ const resolveWolfBeautyLink = async (beauty, version, cause) => {
   await resolveDeathEffects(linked, version, 'romance')
 }
 
+const resolveCupidLink = async (player, version) => {
+  if (cupidState.resolving || !cupidState.pairIds.includes(player?.id)) return
+  const partnerId = cupidState.pairIds.find(id => id !== player.id)
+  const partner = players.value.find(candidate => candidate.id === partnerId && candidate.isAlive)
+  if (!partner) return
+  cupidState.resolving = true
+  killPlayer(partner.id)
+  addRefereeMessage(`${partner.playerNumber}号${partner.playerName}因情侣关系殉情出局。`)
+  await resolveDeathEffects(partner, version, 'romance')
+  cupidState.resolving = false
+}
+
+const registerSpecialDeath = player => {
+  if (!player || specialDeathProcessedIds.has(player.id)) return
+  specialDeathProcessedIds.add(player.id)
+  if (hasRole(player, 'sun')) {
+    bonusDayPending.value++
+    addRefereeMessage('太阳死亡，结算后将额外进行一个白天。')
+  }
+  if (hasRole(player, 'moon')) {
+    bonusNightPending.value++
+    addRefereeMessage('月亮死亡，结算后将额外进行一个夜晚。')
+  }
+}
+
 const resolveDeathEffects = async (player, version, cause, options = {}) => {
   if (!player || !isLoopActive(version)) return
-  await resolveHunterSkill(player, version, cause)
-  await resolveWolfKingSkill(player, version, cause)
-  await resolveWolfBeautyLink(player, version, cause)
+  registerSpecialDeath(player)
+  if (!options.suppressSkills && !bomberSuppressedIds.has(player.id)) {
+    await resolveHunterSkill(player, version, cause)
+    await resolveWolfKingSkill(player, version, cause)
+    await resolveWolfBeautyLink(player, version, cause)
+  }
+  await resolveCupidLink(player, version)
   await transferSheriffBadge(player, version, options.consumeSheriff)
 }
 
@@ -1373,6 +1763,16 @@ const announceDay = async (version) => {
       : `Last night, player(s) ${numbers} died. Deaths are unordered.`
   }
   addRefereeMessage(lastPublicNightReport.value, { detail: nightState.explanation })
+  if (isBoard('bear_hunter_idiot') || isBoard('shapeshifter_wolfking')) {
+    const bear = alivePlayers.value.find(player => hasAbilityRole(player, 'bear'))
+    if (bear) {
+      const seats = [...players.value].sort((a, b) => a.playerNumber - b.playerNumber)
+      const index = seats.findIndex(player => player.id === bear.id)
+      const neighbours = index < 0 ? [] : [seats[(index - 1 + seats.length) % seats.length], seats[(index + 1) % seats.length]].filter(player => player?.isAlive)
+      const roaring = neighbours.some(isWolfRole)
+      addRefereeMessage(roaring ? '熊咆哮了：熊相邻的存活玩家中存在狼人。' : '熊没有咆哮：熊相邻的存活玩家中没有狼人。')
+    }
+  }
   if (nightState.deaths.length && currentRound.value === 1 && Number(boardRules.value.players) === 12 && !lastWordsGiven.value) {
     const firstNightDead = players.value.find(player => player.id === nightState.deaths[0])
     await giveLastWords(firstNightDead, version, 'night')
@@ -1524,6 +1924,10 @@ const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech')
     speechIndex.value = index
     const player = players.value.find(p => p.id === orderInfo.ids[index] && p.isAlive)
     if (!player) continue
+    if (player.id === silencedPlayerId.value) {
+      addRefereeMessage(`${player.playerNumber}号被禁言长老禁言，本轮跳过发言。`)
+      continue
+    }
     startPlayerSpeaking(player.id)
     const result = await generatePublicSpeech(player, action)
     if (!isLoopActive(version)) break
@@ -1587,6 +1991,10 @@ const collectVoteRound = async (version, candidateIds = null, label = '公投') 
   const ballots = []
   for (const voter of [...alivePlayers.value]) {
     if (!isLoopActive(version)) break
+    if (idiotFlippedIds.has(voter.id)) {
+      addRefereeMessage(`${voter.playerNumber}号白痴已翻牌，失去投票权。`, { visibility: 'god' })
+      continue
+    }
     const candidates = eligibleCandidates.filter(candidate => candidate.id !== voter.id)
     if (!candidates.length) continue
     const decision = await requestPlayerDecision(voter, 'vote', { candidates: candidates.map(p => `${p.playerNumber}号`).join('、') })
@@ -1629,6 +2037,38 @@ const giveLastWords = async (player, version, reason = 'exile') => {
   endPlayerSpeaking()
 }
 
+const resolveStalkerAfterVote = async (version, ballots, exileId) => {
+  if (!isBoard('stalker_silencer') || stalkerState.used || !isLoopActive(version)) return
+  const stalker = alivePlayers.value.find(player => hasRole(player, 'stalker'))
+  if (!stalker) return
+  const ballot = ballots.find(item => item.voterId === stalker.id)
+  const target = players.value.find(player => player.id === ballot?.targetId && player.isAlive && player.id !== exileId)
+  if (!target) return
+  const decision = await requestPlayerDecision(stalker, 'stalker', { candidates: `${target.playerNumber}号` })
+  recordPrivateThinking(stalker, decision.thinking, '潜行者刺杀')
+  if (decision.use === false) return
+  stalkerState.used = true
+  stalkerState.pendingTargetId = target.id
+  killPlayer(target.id)
+  addRefereeMessage(`潜行者发动每局一次的刺杀，带走了其投票但未被放逐的${target.playerNumber}号${target.playerName}。`)
+  await resolveDeathEffects(target, version, 'stalker')
+}
+
+const resolveBomberExile = async (bomber, version, ballots) => {
+  killPlayer(bomber.id)
+  const voters = ballots
+    .filter(ballot => ballot.targetId === bomber.id)
+    .map(ballot => players.value.find(player => player.id === ballot.voterId))
+    .filter(player => player?.isAlive)
+  voters.forEach(player => {
+    bomberSuppressedIds.add(player.id)
+    killPlayer(player.id)
+  })
+  addRefereeMessage(`${bomber.playerNumber}号炸弹人被放逐后翻牌爆炸，带走所有投给自己的玩家：${voters.map(player => `${player.playerNumber}号`).join('、') || '无人'}。被带走者不能发动角色技能。`)
+  await resolveDeathEffects(bomber, version, 'exile')
+  for (const voter of voters) await resolveDeathEffects(voter, version, 'bomber', { suppressSkills: true })
+}
+
 const runVotePhase = async (version) => {
   currentPhase.value = 'vote'
   await runKnightAction(version)
@@ -1658,10 +2098,52 @@ const runVotePhase = async (version) => {
     }
   }
   const exiled = players.value.find(player => player.id === exileId)
+  if (hasRole(exiled, 'idiot') && !idiotFlippedIds.has(exiled.id)) {
+    idiotFlippedIds.add(exiled.id)
+    exiled.isAlive = true
+    addRefereeMessage(`${exiled.playerNumber}号白痴被投票放逐，翻牌免死；此后仍可发言但失去投票权。`)
+    await resolveStalkerAfterVote(version, result.ballots, exileId)
+    return
+  }
+  if (hasRole(exiled, 'bomber')) {
+    await resolveBomberExile(exiled, version, result.ballots)
+    await resolveStalkerAfterVote(version, result.ballots, exileId)
+    return
+  }
   killPlayer(exileId)
   lastExiledPlayerId.value = exileId
   await giveLastWords(exiled, version)
   await resolveDeathEffects(exiled, version, 'exile')
+  await resolveStalkerAfterVote(version, result.ballots, exileId)
+}
+
+const runQueuedExtraPhases = async version => {
+  while (bonusDayPending.value > 0 && isLoopActive(version)) {
+    bonusDayPending.value--
+    currentDay.value++
+    silencedPlayerId.value = null
+    currentPhase.value = 'day'
+    addRefereeMessage(`太阳效果发动：现在是额外的第${currentDay.value}天，不经过黑夜。`)
+    await runSpeechPhase(version)
+    if (!isLoopActive(version)) return
+    await runVotePhase(version)
+    if (checkGameEnd()) return
+  }
+  while (bonusNightPending.value > 0 && isLoopActive(version)) {
+    bonusNightPending.value--
+    currentRound.value++
+    currentDay.value++
+    addRefereeMessage(`月亮效果发动：进入额外的第${currentRound.value}夜。`)
+    await runNightPhase(version)
+    if (!isLoopActive(version)) return
+    await announceDay(version)
+    if (checkGameEnd()) return
+    if (boardRules.value.sheriff && !sheriffElectionDone.value) await runSheriffElection(version)
+    await runSpeechPhase(version)
+    if (!isLoopActive(version)) return
+    await runVotePhase(version)
+    if (checkGameEnd()) return
+  }
 }
 
 const runGameLoop = async (version) => {
@@ -1694,6 +2176,9 @@ const runGameLoop = async (version) => {
       await waitWhilePaused()
       await runVotePhase(version)
       if (checkGameEnd() || !isLoopActive(version)) break
+      await runQueuedExtraPhases(version)
+      if (checkGameEnd() || !isLoopActive(version)) break
+      silencedPlayerId.value = null
       currentRound.value++
       currentDay.value++
       await phaseDelay(700)
