@@ -29,11 +29,13 @@ public class AiPlayer implements Serializable {
 
     private String strategy;
 
+    private String language;
+
     private String apiKey;
 
     private String apiBaseUrl;
 
-    private Integer temperature;
+    private Double temperature;
 
     private Integer maxTokens;
 

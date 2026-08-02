@@ -27,6 +27,9 @@ public class AiPlayerServiceImpl extends ServiceImpl<AiPlayerMapper, AiPlayer> i
 
     @Override
     public AiPlayer createAiPlayer(AiPlayer aiPlayer) {
+        if (aiPlayer.getLanguage() == null || aiPlayer.getLanguage().trim().isEmpty()) {
+            aiPlayer.setLanguage("zh-CN");
+        }
         aiPlayer.setCreateTime(LocalDateTime.now());
         aiPlayer.setUpdateTime(LocalDateTime.now());
         aiPlayer.setStatus(1);
@@ -36,6 +39,9 @@ public class AiPlayerServiceImpl extends ServiceImpl<AiPlayerMapper, AiPlayer> i
 
     @Override
     public boolean updateAiPlayer(AiPlayer aiPlayer) {
+        if (aiPlayer.getLanguage() == null || aiPlayer.getLanguage().trim().isEmpty()) {
+            aiPlayer.setLanguage("zh-CN");
+        }
         aiPlayer.setUpdateTime(LocalDateTime.now());
         return updateById(aiPlayer);
     }

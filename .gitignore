@@ -1,0 +1,19 @@
+# Backend runtime and build output
+backend/logs/
+backend/target/
+
+# Frontend dependencies and build output
+frontend/node_modules/
+frontend/dist/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Editor and operating system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+

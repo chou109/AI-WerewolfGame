@@ -1,128 +1,47 @@
 <template>
-  <div class="game-records">
-    <h2>游戏记录</h2>
-    <el-card class="records-card">
-      <template #header>
-        <div class="records-header">
-          <h3>游戏历史记录</h3>
-        </div>
-      </template>
-      <el-table :data="records" style="width: 100%">
-        <el-table-column prop="id" label="记录ID" width="100" />
-        <el-table-column prop="gameBoard" label="游戏板子" width="150" />
-        <el-table-column prop="playerCount" label="玩家数量" width="100" />
-        <el-table-column prop="winner" label="获胜方" width="120" />
-        <el-table-column prop="duration" label="游戏时长" width="120" />
-        <el-table-column prop="startTime" label="开始时间" width="200">
-          <template #default="scope">
-            {{ formatDate(scope.row.startTime) }}
-          </template>
+  <div class="records-page">
+    <h2>{{ $t('gameRecords.title') }}</h2>
+    <el-card>
+      <template #header><h3>{{ $t('gameRecords.title') }}</h3></template>
+      <el-table :data="records" style="width:100%">
+        <el-table-column prop="id" :label="$t('gameRecords.roomId')" width="100" />
+        <el-table-column prop="gameBoard" :label="$t('roomList.gameBoard')" width="150" />
+        <el-table-column prop="playerCount" :label="$t('roomList.playerCount')" width="100" />
+        <el-table-column prop="winner" :label="$locale==='zh-CN'?'获胜方':'Winner'" width="120" />
+        <el-table-column prop="duration" :label="$locale==='zh-CN'?'时长':'Duration'" width="100" />
+        <el-table-column prop="startTime" :label="$locale==='zh-CN'?'开始时间':'Start'" width="180">
+          <template #default="s">{{ s.row.startTime ? new Date(s.row.startTime).toLocaleString() : '' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150">
-          <template #default="scope">
-            <el-button type="primary" size="small" @click="viewRecord(scope.row.id)">查看详情</el-button>
-            <el-button type="danger" size="small" @click="deleteRecord(scope.row.id)">删除</el-button>
+        <el-table-column :label="$t('roomDetail.action')" width="150">
+          <template #default="s">
+            <el-button type="primary" size="small" @click="viewRecord(s.row.id)">{{ $t('gameRecords.viewRecords') }}</el-button>
+            <el-button type="danger" size="small" @click="deleteRecord(s.row.id)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
       <div class="pagination">
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :page-sizes="[10, 20, 50]"
-          layout="total, sizes, prev, pager, next, jumper"
-          :total="total"
-          @size-change="handleSizeChange"
-          @current-change="handleCurrentChange"
-        />
+        <el-pagination v-model:current-page="page" v-model:page-size="size" :page-sizes="[10,20,50]" layout="total,sizes,prev,pager,next" :total="total" />
       </div>
     </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { ref, getCurrentInstance } from 'vue'
 import { useGameStore } from '../stores/game'
 import { ElMessage } from 'element-plus'
 
-const router = useRouter()
-const route = useRoute()
+const { proxy } = getCurrentInstance()
+const $t = proxy.$t; const $locale = proxy.$locale
 const gameStore = useGameStore()
+const records = ref([]); const page = ref(1); const size = ref(10); const total = ref(0)
 
-const records = ref([])
-const currentPage = ref(1)
-const pageSize = ref(10)
-const total = ref(0)
-const loading = ref(false)
-
-onMounted(() => {
-  fetchRecords()
-})
-
-const fetchRecords = async () => {
-  loading.value = true
-  await gameStore.fetchRecords({
-    page: currentPage.value,
-    size: pageSize.value
-  })
-  records.value = gameStore.getRecords
-  total.value = gameStore.getTotalRecords
-  loading.value = false
-}
-
-const handleSizeChange = (size) => {
-  pageSize.value = size
-  fetchRecords()
-}
-
-const handleCurrentChange = (current) => {
-  currentPage.value = current
-  fetchRecords()
-}
-
-const formatDate = (dateString) => {
-  const date = new Date(dateString)
-  return date.toLocaleString()
-}
-
-const viewRecord = (recordId) => {
-  // 查看记录详情
-  console.log('查看记录:', recordId)
-}
-
-const deleteRecord = async (recordId) => {
-  // 删除记录
-  console.log('删除记录:', recordId)
-  ElMessage.success('记录删除成功')
-  fetchRecords()
-}
+const viewRecord = (id) => console.log('View', id)
+const deleteRecord = (id) => { ElMessage.success($locale==='zh-CN'?'已删除':'Deleted') }
 </script>
 
 <style scoped>
-.game-records {
-  padding: 20px;
-}
-
-.game-records h2 {
-  margin-bottom: 20px;
-  color: #303133;
-}
-
-.records-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.records-header h3 {
-  margin: 0;
-  color: #303133;
-}
-
-.pagination {
-  margin-top: 20px;
-  display: flex;
-  justify-content: flex-end;
-}
+.records-page { padding: 10px 0; }
+.records-page h2 { margin-bottom: 20px; }
+.pagination { margin-top: 20px; display: flex; justify-content: flex-end; }
 </style>

@@ -1,148 +1,112 @@
 <template>
   <div class="voice-config">
-    <h2>语音系统配置</h2>
+    <section class="voice-intro">
+      <div>
+        <span class="section-kicker">03 / VOICE LAYER</span>
+        <h2>{{ $t('voiceConfig.title') }}</h2>
+        <p>{{ $t('voiceConfig.subtitle') }}</p>
+      </div>
+      <span class="support-status" :class="{ supported: speechSupported }">
+        <i></i>{{ speechSupported ? $t('voiceConfig.supported') : $t('voiceConfig.unsupported') }}
+      </span>
+    </section>
+
     <el-card class="config-card">
       <template #header>
         <div class="config-header">
-          <h3>TTS引擎配置</h3>
+          <div>
+            <span class="card-kicker">LOCAL SPEECH</span>
+            <h3>{{ $t('voiceConfig.localTitle') }}</h3>
+          </div>
+          <el-switch v-model="voiceConfig.enabled" :active-text="$t('voiceConfig.autoRead')" />
         </div>
       </template>
-      <el-form :model="voiceConfig" :rules="voiceRules" ref="voiceFormRef" label-width="120px">
-        <el-form-item label="TTS引擎" prop="ttsEngine">
-          <el-select v-model="voiceConfig.ttsEngine" placeholder="请选择TTS引擎">
-            <el-option label="Microsoft Azure TTS" value="azure" />
-            <el-option label="OpenAI TTS" value="openai" />
-            <el-option label="百度语音" value="baidu" />
-            <el-option label="阿里云语音" value="aliyun" />
-            <el-option label="腾讯云语音" value="tencent" />
+
+      <el-alert class="voice-note" :title="$t('voiceConfig.localNote')" type="info" :closable="false" show-icon />
+
+      <el-form :model="voiceConfig" ref="voiceFormRef" label-position="top">
+        <el-form-item :label="$t('voiceConfig.voice')">
+          <el-select v-model="voiceConfig.voiceURI" :placeholder="$t('voiceConfig.voicePlaceholder')" :disabled="!speechSupported || !voices.length" style="width: 100%">
+            <el-option v-for="voice in voices" :key="voice.voiceURI" :label="voiceLabel(voice)" :value="voice.voiceURI" />
           </el-select>
+          <span class="field-hint">{{ voices.length ? $t('voiceConfig.voiceHint') : $t('voiceConfig.noVoices') }}</span>
         </el-form-item>
-        <el-form-item label="API Key" prop="apiKey">
-          <el-input v-model="voiceConfig.apiKey" type="password" placeholder="请输入API Key" />
-        </el-form-item>
-        <el-form-item label="API Base URL" prop="apiBaseUrl">
-          <el-input v-model="voiceConfig.apiBaseUrl" placeholder="请输入API Base URL（可选）" />
-        </el-form-item>
-        <el-form-item label="语音类型" prop="voiceType">
-          <el-select v-model="voiceConfig.voiceType" placeholder="请选择语音类型">
-            <el-option label="默认语音" value="default" />
-            <el-option label="男声" value="male" />
-            <el-option label="女声" value="female" />
-            <el-option label="儿童" value="child" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="语速" prop="speed">
-          <el-slider v-model="voiceConfig.speed" :min="0.5" :max="2" :step="0.1" />
-          <span class="speed-value">{{ voiceConfig.speed }}</span>
-        </el-form-item>
-        <el-form-item label="音量" prop="volume">
-          <el-slider v-model="voiceConfig.volume" :min="0" :max="1" :step="0.1" />
-          <span class="volume-value">{{ voiceConfig.volume }}</span>
-        </el-form-item>
+
+        <div class="control-grid">
+          <el-form-item :label="$t('voiceConfig.speed')">
+            <div class="slider-line"><el-slider v-model="voiceConfig.rate" :min="0.5" :max="2" :step="0.1" :disabled="!speechSupported" /><span>{{ voiceConfig.rate.toFixed(1) }}×</span></div>
+          </el-form-item>
+          <el-form-item :label="$t('voiceConfig.pitch')">
+            <div class="slider-line"><el-slider v-model="voiceConfig.pitch" :min="0.5" :max="2" :step="0.1" :disabled="!speechSupported" /><span>{{ voiceConfig.pitch.toFixed(1) }}</span></div>
+          </el-form-item>
+          <el-form-item :label="$t('voiceConfig.volume')">
+            <div class="slider-line"><el-slider v-model="voiceConfig.volume" :min="0" :max="1" :step="0.1" :disabled="!speechSupported" /><span>{{ Math.round(voiceConfig.volume * 100) }}%</span></div>
+          </el-form-item>
+        </div>
+
         <el-form-item>
-          <el-button type="primary" @click="saveConfig" :loading="loading">保存配置</el-button>
-          <el-button type="info" @click="testConfig">测试语音</el-button>
-          <el-button type="warning" @click="resetConfig">重置默认值</el-button>
+          <el-button type="primary" :disabled="!speechSupported" @click="testVoice">{{ $t('voiceConfig.testVoice') }}</el-button>
+          <el-button @click="saveConfig">{{ $t('voiceConfig.saveConfig') }}</el-button>
+          <el-button text @click="resetConfig">{{ $t('voiceConfig.reset') }}</el-button>
         </el-form-item>
       </el-form>
+    </el-card>
+
+    <el-card class="cloud-card">
+      <template #header>
+        <div class="config-header"><div><span class="card-kicker">CLOUD ENGINES</span><h3>{{ $t('voiceConfig.cloudTitle') }}</h3></div><span class="coming-soon">{{ $t('voiceConfig.comingSoon') }}</span></div>
+      </template>
+      <p>{{ $t('voiceConfig.cloudNote') }}</p>
     </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import { ElMessage } from 'element-plus'
+import { DEFAULT_VOICE_CONFIG, isSpeechSynthesisSupported, loadVoiceConfig, saveVoiceConfig as persistVoiceConfig, speakText, stopSpeaking } from '../composables/useSpeechSynthesis.js'
 
+const { proxy } = getCurrentInstance()
+const $t = proxy.$t
+const speechSupported = ref(isSpeechSynthesisSupported())
+const voices = ref([])
 const voiceFormRef = ref(null)
-const loading = ref(false)
-const testing = ref(false)
+const voiceConfig = reactive(loadVoiceConfig())
 
-const voiceConfig = reactive({
-  ttsEngine: 'azure',
-  apiKey: '',
-  apiBaseUrl: '',
-  voiceType: 'default',
-  speed: 1,
-  volume: 1
-})
-
-const voiceRules = {
-  ttsEngine: [
-    { required: true, message: '请选择TTS引擎', trigger: 'change' }
-  ],
-  apiKey: [
-    { required: true, message: '请输入API Key', trigger: 'blur' }
-  ]
-}
-
-onMounted(() => {
-  loadConfig()
-})
-
-const loadConfig = () => {
-  const savedConfig = localStorage.getItem('voiceConfig')
-  if (savedConfig) {
-    Object.assign(voiceConfig, JSON.parse(savedConfig))
+const loadVoices = () => {
+  if (!speechSupported.value) return
+  voices.value = window.speechSynthesis.getVoices()
+  if (!voiceConfig.voiceURI && voices.value.length) {
+    const preferred = voices.value.find(voice => voice.lang?.toLowerCase().startsWith('zh')) || voices.value[0]
+    voiceConfig.voiceURI = preferred.voiceURI
   }
 }
-
-const saveConfig = async () => {
-  if (!voiceFormRef.value) return
-  await voiceFormRef.value.validate(async (valid) => {
-    if (valid) {
-      loading.value = true
-      localStorage.setItem('voiceConfig', JSON.stringify(voiceConfig))
-      ElMessage.success('配置保存成功')
-      loading.value = false
-    }
-  })
-}
-
-const testConfig = async () => {
-  testing.value = true
-  // 测试语音
-  setTimeout(() => {
-    ElMessage.success('测试成功')
-    testing.value = false
-  }, 1000)
-}
-
-const resetConfig = () => {
-  Object.assign(voiceConfig, {
-    ttsEngine: 'azure',
-    apiKey: '',
-    apiBaseUrl: '',
-    voiceType: 'default',
-    speed: 1,
-    volume: 1
-  })
-}
+const voiceLabel = voice => `${voice.name} (${voice.lang})`
+const saveConfig = () => { persistVoiceConfig(voiceConfig); ElMessage.success($t('voiceConfig.configSaved')) }
+const testVoice = () => { if (!speechSupported.value) return; persistVoiceConfig(voiceConfig); speakText($t('voiceConfig.testText'), { force: true }) }
+const resetConfig = () => { Object.assign(voiceConfig, DEFAULT_VOICE_CONFIG); loadVoices(); stopSpeaking() }
+onMounted(() => { loadVoices(); window.speechSynthesis?.addEventListener('voiceschanged', loadVoices) })
+onUnmounted(() => { window.speechSynthesis?.removeEventListener('voiceschanged', loadVoices); stopSpeaking() })
 </script>
 
 <style scoped>
-.voice-config {
-  padding: 20px;
-}
-
-.voice-config h2 {
-  margin-bottom: 20px;
-  color: #303133;
-}
-
-.config-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.config-header h3 {
-  margin: 0;
-  color: #303133;
-}
-
-.speed-value,
-.volume-value {
-  margin-left: 10px;
-  color: #409eff;
-}
+.voice-config { width: min(920px, 100%); margin: 0 auto; padding: 26px 0 82px; }
+.voice-intro { display: flex; justify-content: space-between; align-items: end; gap: 24px; padding: 26px 0 36px; }
+.section-kicker, .card-kicker { color: #d9b55d; font: 700 10px/1 var(--font-heading); letter-spacing: .17em; }
+.voice-intro h2 { margin: 14px 0 12px; color: #edf4f8; font-size: clamp(32px, 4vw, 48px); letter-spacing: -.04em; }
+.voice-intro p { max-width: 620px; margin: 0; color: #9eafbe; font-size: 16px; line-height: 1.65; }
+.support-status { display: inline-flex; align-items: center; gap: 8px; color: #c38b8b; font: 700 11px/1 var(--font-heading); letter-spacing: .08em; white-space: nowrap; }
+.support-status i { width: 7px; height: 7px; border-radius: 50%; background: #c38b8b; }
+.support-status.supported { color: #9bd09f; }.support-status.supported i { background: #9bd09f; }
+.config-card, .cloud-card { border-color: rgba(180, 204, 222, .18) !important; background: linear-gradient(155deg, #101d2a, #0b141f) !important; }
+.cloud-card { margin-top: 18px; }
+.config-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.config-header h3 { margin: 8px 0 0; color: #eff5fa; font-size: 21px; }
+.coming-soon { color: #d9b55d; font: 700 10px/1 var(--font-heading); letter-spacing: .12em; }
+.voice-note { margin-bottom: 22px; }
+.field-hint, .cloud-card p { display: block; margin: 8px 0 0; color: #8294a3; font-size: 12px; line-height: 1.6; }
+.control-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.slider-line { display: flex; align-items: center; gap: 12px; }
+.slider-line :deep(.el-slider) { flex: 1; }.slider-line > span { min-width: 46px; color: #e4bd65; font-weight: 700; text-align: right; }
+@media (max-width: 700px) { .voice-intro { display: block; }.support-status { margin-top: 18px; }.control-grid { grid-template-columns: 1fr; gap: 0; } }
 </style>

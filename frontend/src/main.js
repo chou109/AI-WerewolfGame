@@ -4,7 +4,9 @@ import router from './router'
 import pinia from './stores'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
+import './style.css'
 import axios from 'axios'
+import i18n from './i18n'
 
 // 配置axios
 axios.defaults.baseURL = 'http://localhost:8081/api'
@@ -31,6 +33,7 @@ const app = createApp(App)
 app.use(router)
 app.use(pinia)
 app.use(ElementPlus)
+app.use(i18n)
 
 // 响应拦截器
 axios.interceptors.response.use(

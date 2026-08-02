@@ -41,7 +41,7 @@ const routes = [
         component: () => import('../views/game/GamePlay.vue')
       },
       {
-        path: 'api',
+        path: 'ai-players',
         name: 'ApiConfig',
         component: () => import('../views/ApiConfig.vue')
       },

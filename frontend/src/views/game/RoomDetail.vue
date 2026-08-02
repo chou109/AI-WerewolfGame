@@ -1,383 +1,185 @@
 <template>
-  <div class="room-detail">
-    <h2>房间详情</h2>
-    <el-card class="room-info-card">
-      <template #header>
-        <div class="room-header">
-          <h3>{{ room.roomName }}</h3>
-          <span class="room-code">{{ room.roomCode }}</span>
+  <div class="room-detail-page">
+    <section class="room-intro">
+      <div>
+        <span class="room-kicker">{{ room.status === 1 ? 'WAITING TABLE' : room.status === 2 ? 'ACTIVE TABLE' : 'CLOSED TABLE' }}</span>
+        <h2>{{ room.roomName || $t('roomDetail.title') }}</h2>
+        <div class="room-meta-line">
+          <span class="room-state"><i></i>{{ getStatus(room.status) }}</span>
+          <span>{{ $t('gameBoard.' + room.gameBoard) }}</span>
+          <span>{{ room.playerCount }} {{ $locale === 'zh-CN' ? '人局' : 'PLAYERS' }}</span>
+          <span v-if="room.roomCode">{{ $locale === 'zh-CN' ? '私密房间' : 'PRIVATE TABLE' }}</span>
         </div>
-      </template>
-      <div class="room-info">
-        <p>玩家数量：{{ room.playerCount }}人</p>
-        <p>游戏板子：{{ room.gameBoard }}</p>
-        <p>状态：{{ getRoomStatus(room.status) }}</p>
       </div>
-      <div class="player-list">
-        <h4>玩家列表</h4>
-        <el-table :data="players" style="width: 100%">
-          <el-table-column prop="playerNumber" label="编号" width="80" />
-          <el-table-column prop="playerName" label="玩家名称">
-            <template #default="scope">
-              {{ getPlayerName(scope.row) }}
+      <div class="room-intro-actions">
+        <button class="text-action" @click="router.push('/game/room/list')">← {{ $t('common.back') }}</button>
+        <button class="enter-action" @click="enterRoom">{{ $t('roomDetail.enterRoom') }} <span>→</span></button>
+      </div>
+    </section>
+
+    <section class="detail-layout">
+      <main class="roster-panel">
+        <div class="panel-heading">
+          <div><span>01 / {{ $locale === 'zh-CN' ? '入座名单' : 'SEATING ROSTER' }}</span><h3>{{ $t('roomDetail.playerList') }}</h3></div>
+          <b>{{ players.length }} / {{ room.playerCount || 0 }}</b>
+        </div>
+
+        <div class="seat-grid">
+          <article v-for="slot in seatSlots" :key="slot.number" class="seat" :class="{ occupied: slot.player, empty: !slot.player }">
+            <template v-if="slot.player">
+              <span class="seat-number">{{ String(slot.number).padStart(2, '0') }}</span>
+              <span class="seat-avatar">{{ slot.player.userId === -1 ? '✦' : '◌' }}</span>
+              <div class="seat-copy"><b>{{ getPlayerName(slot.player) }}</b><small>{{ slot.player.userId === -1 ? 'AI PLAYER' : ($locale === 'zh-CN' ? '真人玩家' : 'HUMAN PLAYER') }}</small></div>
+              <button v-if="room.status === 1" class="remove-player" @click="deletePlayer(slot.player.id)" :aria-label="$t('roomDetail.deletePlayer')">×</button>
             </template>
-          </el-table-column>
-          <el-table-column prop="status" label="状态">
-            <template #default="scope">
-              {{ getPlayerStatus(scope.row.status) }}
+            <template v-else>
+              <span class="seat-number">{{ String(slot.number).padStart(2, '0') }}</span>
+              <span class="empty-seat-mark">＋</span>
+              <span class="empty-seat-label">{{ $locale === 'zh-CN' ? '空位' : 'OPEN SEAT' }}</span>
             </template>
-          </el-table-column>
-          <el-table-column label="操作" width="100" v-if="room.status === 1">
-            <template #default="scope">
-              <el-button type="danger" size="small" @click="deletePlayer(scope.row.id)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-      
-      <!-- AI玩家加入功能 -->
-      <div v-if="room.status === 1" class="ai-player-section">
-        <h4>AI玩家加入</h4>
-        <el-form :inline="true" class="ai-player-form">
-          <el-form-item label="选择AI玩家">
-            <el-select v-model="selectedAiPlayerId" placeholder="请选择AI玩家" style="width: 200px">
-              <el-option
-                v-for="aiPlayer in aiPlayers"
-                :key="aiPlayer.id"
-                :label="aiPlayer.name"
-                :value="aiPlayer.id"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="玩家编号">
-            <el-select v-model="aiPlayerNumber" placeholder="请选择玩家编号" style="width: 120px">
-              <el-option
-                v-for="number in availablePlayerNumbers"
-                :key="number"
-                :label="number"
-                :value="number"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" @click="addAiPlayerToRoom" :loading="addingAiPlayer" :disabled="!selectedAiPlayerId || !aiPlayerNumber">添加AI玩家</el-button>
-          </el-form-item>
-        </el-form>
-      </div>
-      
-      <div class="room-actions">
-        <el-button type="primary" size="large" @click="enterRoom">进入房间</el-button>
-        <el-button type="success" size="large" @click="startGame" :disabled="!canStartGame">开始游戏</el-button>
-        <el-button type="danger" size="large" @click="leaveRoom">离开房间</el-button>
-      </div>
-    </el-card>
+          </article>
+        </div>
+      </main>
+
+      <aside class="room-sidebar">
+        <section v-if="room.status === 1" class="side-panel add-panel">
+          <span class="side-kicker">02 / {{ $locale === 'zh-CN' ? '邀请 AI' : 'INVITE AI' }}</span>
+          <h3>{{ $t('roomDetail.addAiPlayer') }}</h3>
+          <p>{{ $locale === 'zh-CN' ? '选择一位已配置的 AI 玩家，并安排其座位。' : 'Choose a configured AI player and assign an open seat.' }}</p>
+          <el-button
+            class="quick-fill-button"
+            :loading="quickFilling"
+            :disabled="adding || quickFilling || !availableNums.length || !availableAiPlayers.length"
+            @click="quickFillPlayers"
+          >
+            {{ $locale === 'zh-CN' ? '随机填满空位' : 'FILL OPEN SEATS' }}
+          </el-button>
+          <el-form class="add-form" label-position="top">
+            <el-form-item :label="$t('roomDetail.selectAiPlayer')">
+              <el-select v-model="selectedAi" :placeholder="$t('roomDetail.selectAiPlayer')">
+                <el-option v-for="player in availableAiPlayers" :key="player.id" :label="player.name" :value="player.id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item :label="$t('roomDetail.playerNumber')">
+              <el-select v-model="aiNum" :placeholder="$t('roomDetail.selectPlayerNumber')">
+                <el-option v-for="number in availableNums" :key="number" :label="number" :value="number" />
+              </el-select>
+            </el-form-item>
+            <el-button type="primary" class="add-ai-button" @click="addAiPlayer" :loading="adding" :disabled="quickFilling || !selectedAi || !aiNum">{{ $t('roomDetail.addAiPlayerBtn') }}</el-button>
+          </el-form>
+        </section>
+
+        <section class="side-panel game-ready">
+          <span class="side-kicker">03 / {{ $locale === 'zh-CN' ? '游戏状态' : 'TABLE STATUS' }}</span>
+          <h3>{{ canStart ? ($locale === 'zh-CN' ? '圆桌已就绪' : 'TABLE IS READY') : ($locale === 'zh-CN' ? '等待所有玩家' : 'WAITING FOR PLAYERS') }}</h3>
+          <p>{{ canStart ? ($locale === 'zh-CN' ? '所有座位均已确认，可以开始本局游戏。' : 'Every seat is confirmed. The game can begin.') : ($locale === 'zh-CN' ? `还需要 ${Math.max(0, (room.playerCount || 0) - players.length)} 位玩家入座。` : `${Math.max(0, (room.playerCount || 0) - players.length)} more players are needed.`) }}</p>
+          <button class="start-game-button" :disabled="!canStart" @click="startGame"><span>✦</span>{{ $t('roomDetail.startGame') }}</button>
+          <button class="leave-button" @click="leaveRoom">{{ $t('roomDetail.leaveRoom') }}</button>
+        </section>
+      </aside>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, getCurrentInstance } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useGameStore } from '../../stores/game'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 
+const { proxy } = getCurrentInstance()
+const $t = proxy.$t
+const $locale = proxy.$locale
 const router = useRouter()
 const route = useRoute()
 const gameStore = useGameStore()
-const room = reactive({})  
-const players = ref([])  
-const aiPlayers = ref([])  
-const selectedAiPlayerId = ref(null)  
-const aiPlayerNumber = ref(null)  // 改为null，让用户从下拉列表选择  
-const loading = ref(false)  
-const addingAiPlayer = ref(false)  
+const room = reactive({})
+const players = ref([])
+const aiPlayers = ref([])
+const selectedAi = ref(null)
+const aiNum = ref(null)
+const adding = ref(false)
+const quickFilling = ref(false)
 
-const canStartGame = computed(() => {  
-  return room.status === 1 && room.playerCount === (players.value || []).length  
-})  
+const canStart = computed(() => room.status === 1 && room.playerCount === players.value.length)
+const availableNums = computed(() => Array.from({ length: room.playerCount || 0 }, (_, index) => index + 1).filter(number => !players.value.some(player => player.playerNumber === number)))
+const availableAiPlayers = computed(() => aiPlayers.value.filter(ai => !players.value.some(player => player.aiPlayerId === ai.id)))
+const seatSlots = computed(() => Array.from({ length: room.playerCount || 0 }, (_, index) => ({ number: index + 1, player: players.value.find(player => player.playerNumber === index + 1) })))
 
-// 计算可用的玩家编号  
-const availablePlayerNumbers = computed(() => {  
-  const totalCount = room.playerCount || 12  // 默认12人  
-  const usedNumbers = players.value.map(p => p.playerNumber)  
-  const numbers = []  
-  
-  for (let i = 1; i <= totalCount; i++) {  
-    if (!usedNumbers.includes(i)) {  
-      numbers.push(i)  
-    }  
-  }  
-  
-  return numbers  
-})
-
-onMounted(() => {
-  fetchRoomDetail()
-  // 先获取AI玩家列表，再获取房间玩家列表
-  fetchAiPlayers().then(() => {
-    fetchPlayers()
-  })
-})
-
-const fetchRoomDetail = async () => {
-  const roomId = route.params.id
-  if (!roomId) {
-    ElMessage.error('房间ID不存在')
-    router.push('/game/room/list')
-    return
-  }
-  const roomDetail = await gameStore.getRoomById(roomId)
-  Object.assign(room, roomDetail)
+onMounted(async () => { await fetchRoom(); await fetchAi(); await fetchPlayers() })
+const fetchRoom = async () => { const detail = await gameStore.getRoomById(route.params.id); if (detail) Object.assign(room, detail) }
+const fetchPlayers = async () => { const list = await gameStore.getPlayersByRoomId(route.params.id); players.value = (list || []).sort((a, b) => a.playerNumber - b.playerNumber) }
+const fetchAi = async () => { try { const response = await axios.get('/ai/player/available'); if (response.data.code === 200) aiPlayers.value = response.data.data } catch {} }
+const getStatus = status => ({ 1: $t('roomList.waiting'), 2: $t('roomList.playing'), 3: $t('roomList.ended') }[status] || $t('common.unknown'))
+const getPlayerName = player => {
+  if (player.userId === -1) return aiPlayers.value.find(ai => ai.id == player.aiPlayerId)?.name || player.playerName || `AI ${player.playerNumber}`
+  return player.playerName || `Player ${player.playerNumber}`
 }
-
-const fetchPlayers = async () => {
-  const roomId = route.params.id
-  if (!roomId) return
-  const playerList = await gameStore.getPlayersByRoomId(roomId)
-  // 确保每个AI玩家都有aiPlayerId字段
-  const processedPlayers = playerList.map(player => {
-    // 如果是AI玩家但没有aiPlayerId字段，尝试从playerName中提取
-    if (player.userId === -1 && !player.aiPlayerId) {
-      // 假设playerName格式为"AI玩家 X"，尝试从aiPlayers中匹配
-      const aiPlayer = aiPlayers.value.find(ai => ai.name.includes(player.playerName))
-      if (aiPlayer) {
-        player.aiPlayerId = aiPlayer.id
-      }
-    }
-    return player
-  })
-  
-  // 按编号排序
-  processedPlayers.sort((a, b) => a.playerNumber - b.playerNumber)
-  
-  players.value = processedPlayers
-}
-
-const deletePlayer = async (playerId) => {
-  // 从房间中移除玩家（调用后端API实现软删除）
+const deletePlayer = async id => { try { await axios.post('/game/player/remove', { roomId: route.params.id, playerId: id }); ElMessage.success($t('roomDetail.playerDeleted')); await fetchPlayers() } catch { ElMessage.error($t('roomDetail.addFailed')) } }
+const addAiPlayer = async () => {
+  if (!selectedAi.value || !aiNum.value) return
+  adding.value = true
   try {
-    const roomId = route.params.id
-    const response = await axios.post('/game/player/remove', {
-      roomId,
-      playerId
-    })
-    
-    if (response.data.code === 200) {
-      // 从前端列表中移除玩家
-      const playerIndex = players.value.findIndex(p => p.id === playerId)
-      if (playerIndex !== -1) {
-        const deletedPlayer = players.value[playerIndex]
-        players.value.splice(playerIndex, 1)
-        ElMessage.success(`玩家 ${getPlayerName(deletedPlayer)} 已从列表中移除`)
+    const ai = aiPlayers.value.find(player => player.id === selectedAi.value)
+    const response = await axios.post('/game/player/add', { roomId: route.params.id, userId: -1, aiPlayerId: selectedAi.value, playerNumber: aiNum.value, playerName: ai.name })
+    if (response.data.code === 200) { ElMessage.success($t('roomDetail.aiPlayerAdded', { name: ai.name })); selectedAi.value = null; aiNum.value = null; await fetchPlayers() }
+  } catch { ElMessage.error($t('roomDetail.addFailed')) } finally { adding.value = false }
+}
+const shuffle = items => {
+  const shuffled = [...items]
+  for (let index = shuffled.length - 1; index > 0; index--) {
+    const randomIndex = Math.floor(Math.random() * (index + 1))
+    ;[shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]]
+  }
+  return shuffled
+}
+const quickFillPlayers = async () => {
+  if (quickFilling.value) return
+
+  const openSeats = [...availableNums.value]
+  const candidates = shuffle(availableAiPlayers.value).slice(0, openSeats.length)
+  if (!openSeats.length || !candidates.length) return
+
+  quickFilling.value = true
+  try {
+    const results = await Promise.all(candidates.map(async (ai, index) => {
+      try {
+        const response = await axios.post('/game/player/add', {
+          roomId: route.params.id,
+          userId: -1,
+          aiPlayerId: ai.id,
+          playerNumber: openSeats[index],
+          playerName: ai.name
+        })
+        return response.data.code === 200
+      } catch {
+        return false
       }
+    }))
+
+    const filledCount = results.filter(Boolean).length
+    await fetchPlayers()
+    if (filledCount === openSeats.length) {
+      ElMessage.success($locale.value === 'zh-CN' ? `已随机填充 ${filledCount} 名 AI 玩家` : `${filledCount} AI players added at random`)
+    } else if (filledCount > 0) {
+      const remainingCount = Math.max(0, openSeats.length - filledCount)
+      ElMessage.warning($locale.value === 'zh-CN' ? `已填充 ${filledCount} 名，仍缺少 ${remainingCount} 名可用 AI 玩家` : `${filledCount} players added; ${remainingCount} seats remain open`)
     } else {
-      ElMessage.error('玩家删除失败')
+      ElMessage.error($locale.value === 'zh-CN' ? '快速填充失败，请稍后重试' : 'Unable to fill seats. Please try again.')
     }
-  } catch (error) {
-    console.error('Delete player error:', error)
-    ElMessage.error('玩家删除失败')
-  }
-}
-
-const fetchAiPlayers = async () => {
-  try {
-    const response = await axios.get('/ai/player/available')
-    if (response.data.code === 200) {
-      aiPlayers.value = response.data.data
-    }
-  } catch (error) {
-    console.error('Fetch AI players error:', error)
-    ElMessage.error('获取AI玩家列表失败')
-  }
-  return Promise.resolve()
-}
-
-const getRoomStatus = (status) => {
-  const statusMap = {
-    1: '等待中',
-    2: '游戏中',
-    3: '已结束'
-  }
-  return statusMap[status] || '未知'
-}
-
-const getPlayerStatus = (status) => {
-  const statusMap = {
-    1: '在线',
-    2: '离线'
-  }
-  return statusMap[status] || '未知'
-}
-
-const getPlayerName = (player) => {
-  if (player.userId === -1) {
-    // 是AI玩家，尝试从aiPlayers中找到对应的名称
-    console.log('AI Player:', player)
-    console.log('AI Players:', aiPlayers.value)
-    
-    // 方法1：通过aiPlayerId匹配
-    if (player.aiPlayerId) {
-      const aiPlayer = aiPlayers.value.find(ai => ai.id == player.aiPlayerId) // 使用==运算符，忽略类型差异
-      if (aiPlayer) {
-        return aiPlayer.name
-      }
-    }
-    
-    // 方法2：通过playerName匹配
-    if (player.playerName) {
-      const aiPlayer = aiPlayers.value.find(ai => ai.name === player.playerName)
-      if (aiPlayer) {
-        return aiPlayer.name
-      }
-    }
-    
-    // 方法3：通过名称包含关系匹配
-    if (player.playerName) {
-      const aiPlayer = aiPlayers.value.find(ai => ai.name.includes(player.playerName) || player.playerName.includes(ai.name))
-      if (aiPlayer) {
-        return aiPlayer.name
-      }
-    }
-    
-    return player.playerName || `AI玩家 ${player.playerNumber}`
-  }
-  return player.playerName || `玩家 ${player.playerNumber}`
-}
-
-const addAiPlayerToRoom = async () => {
-  if (!selectedAiPlayerId.value) {
-    ElMessage.warning('请选择AI玩家')
-    return
-  }
-  
-  if (!aiPlayerNumber.value) {
-    ElMessage.warning('请选择玩家编号')
-    return
-  }
-  
-  addingAiPlayer.value = true
-  try {
-    const roomId = route.params.id
-    const aiPlayer = aiPlayers.value.find(ai => ai.id == selectedAiPlayerId.value) // 使用==运算符，忽略类型差异
-    
-    // 调用后端API添加AI玩家到房间
-    const response = await axios.post('/game/player/add', {
-      roomId,
-      userId: -1, // 使用-1表示AI玩家
-      aiPlayerId: selectedAiPlayerId.value, // 传递AI玩家ID
-      playerNumber: aiPlayerNumber.value,
-      playerName: aiPlayer.name // 直接传递AI玩家名称
-    })
-    
-    if (response.data.code === 200) {
-      ElMessage.success(`AI玩家 ${aiPlayer.name} 已加入房间`)
-      // 刷新玩家列表
-      await fetchPlayers()
-      // 重置选择
-      selectedAiPlayerId.value = null
-      aiPlayerNumber.value = null // 重置为null，让用户重新选择
-    } else {
-      ElMessage.error('添加AI玩家失败')
-    }
-  } catch (error) {
-    console.error('Add AI player error:', error)
-    ElMessage.error('添加AI玩家失败')
   } finally {
-    addingAiPlayer.value = false
+    quickFilling.value = false
   }
 }
-
-const startGame = async () => {
-  if (!canStartGame.value) return
-  loading.value = true
-  const success = await gameStore.startGame(route.params.id)
-  loading.value = false
-  if (success) {
-    ElMessage.success('游戏开始')
-    router.push(`/game/play/${route.params.id}`)
-  } else {
-    ElMessage.error('游戏开始失败')
-  }
-}
-
-const leaveRoom = async () => {
-  const success = await gameStore.leaveRoom(route.params.id)
-  if (success) {
-    ElMessage.success('已离开房间')
-    router.push('/game/room/list')
-  } else {
-    ElMessage.error('离开房间失败')
-  }
-}
-
-const enterRoom = () => {
-  // 进入房间，跳转到游戏页面
-  router.push(`/game/play/${route.params.id}`)
-}
+const startGame = async () => { if (!canStart.value) return; const success = await gameStore.startGame(route.params.id); if (success) { ElMessage.success($t('roomDetail.gameStarted')); router.push(`/game/play/${route.params.id}`) } else ElMessage.error($t('roomDetail.startFailed')) }
+const leaveRoom = async () => { await gameStore.leaveRoom(route.params.id); ElMessage.success($t('roomDetail.leftRoom')); router.push('/game/room/list') }
+const enterRoom = () => router.push(`/game/play/${route.params.id}`)
 </script>
 
 <style scoped>
-.room-detail {
-  padding: 20px;
-}
-
-.room-detail h2 {
-  margin-bottom: 20px;
-  color: #303133;
-}
-
-.room-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.room-header h3 {
-  margin: 0;
-  color: #303133;
-}
-
-.room-code {
-  background-color: #ecf5ff;
-  color: #409eff;
-  padding: 2px 10px;
-  border-radius: 10px;
-  font-size: 14px;
-}
-
-.room-info {
-  margin: 15px 0;
-  line-height: 1.5;
-}
-
-.player-list {
-  margin: 20px 0;
-}
-
-.player-list h4 {
-  margin: 0 0 10px 0;
-  color: #303133;
-}
-
-.ai-player-section {
-  margin: 20px 0;
-  padding: 15px;
-  background-color: #f5f7fa;
-  border-radius: 8px;
-}
-
-.ai-player-section h4 {
-  margin: 0 0 15px 0;
-  color: #303133;
-}
-
-.ai-player-form {
-  margin-bottom: 10px;
-}
-
-.room-actions {
-  margin-top: 20px;
-  display: flex;
-  gap: 10px;
-}
+.room-detail-page { width: min(1240px, 100%); margin: 0 auto; padding: 26px 0 84px; }.room-intro { display: flex; align-items: end; justify-content: space-between; gap: 30px; padding: 30px 0 38px; }.room-kicker, .side-kicker { color: #d9b55d; font: 700 10px/1 var(--font-heading); letter-spacing: .18em; }.room-intro h2 { margin: 14px 0 12px; color: #eef4f8; font-size: clamp(34px, 4vw, 50px); letter-spacing: -.045em; }.room-meta-line { display: flex; flex-wrap: wrap; gap: 12px; color: #9eafbe; font: 700 10px/1 var(--font-heading); letter-spacing: .08em; }.room-meta-line > span:not(:first-child)::before { margin-right: 12px; color: #546575; content: '·'; }.room-state { color: #a7d8a2; }.room-state i { display: inline-block; width: 6px; height: 6px; margin-right: 7px; border-radius: 50%; background: #93d99d; box-shadow: 0 0 0 4px rgba(147, 217, 157, .1); }.room-intro-actions { display: flex; align-items: center; gap: 18px; }.text-action { border: 0; color: #b2c0cb; background: transparent; cursor: pointer; font: 700 10px/1 var(--font-heading); letter-spacing: .1em; }.text-action:hover { color: #e3bd66; }.enter-action { min-height: 42px; padding: 0 16px; border: 1px solid rgba(217, 181, 93, .7); border-radius: 7px; color: #ebc76d; background: transparent; cursor: pointer; font: 700 10px/1 var(--font-heading); letter-spacing: .08em; }.enter-action span { margin-left: 9px; font-size: 15px; }.enter-action:hover { background: rgba(217, 181, 93, .1); }
+.detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: start; }.roster-panel, .side-panel { border: 1px solid rgba(180, 204, 222, .18); border-radius: 12px; background: linear-gradient(155deg, #101d2a, #0b141f); }.roster-panel { padding: 28px; }.panel-heading { display: flex; align-items: end; justify-content: space-between; padding-bottom: 23px; border-bottom: 1px solid rgba(180, 204, 222, .14); }.panel-heading span { color: #d9b55d; font: 700 10px/1 var(--font-heading); letter-spacing: .15em; }.panel-heading h3 { margin: 9px 0 0; color: #eff4f8; font-size: 22px; }.panel-heading > b { padding: 7px 9px; border: 1px solid rgba(180, 204, 222, .17); border-radius: 4px; color: #d4dee6; font: 700 10px/1 var(--font-heading); letter-spacing: .08em; }.seat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; padding-top: 20px; }.seat { position: relative; display: flex; align-items: center; min-height: 76px; padding: 13px; border: 1px solid rgba(180, 204, 222, .13); border-radius: 8px; background: #0b1520; }.seat.empty { opacity: .6; border-style: dashed; }.seat-number { align-self: start; margin-right: 13px; color: #768798; font: 700 10px/1 var(--font-heading); letter-spacing: .12em; }.seat-avatar, .empty-seat-mark { display: grid; width: 31px; height: 31px; margin-right: 11px; place-items: center; border: 1px solid rgba(217, 181, 93, .24); border-radius: 50%; color: #dfb95e; font: 400 19px/1 Georgia, serif; }.empty-seat-mark { color: #8597a7; border-color: rgba(180, 204, 222, .16); }.seat-copy { min-width: 0; flex: 1; }.seat-copy b { display: block; overflow: hidden; color: #e8eff4; font: 700 14px/1.25 var(--font-heading); text-overflow: ellipsis; white-space: nowrap; }.seat-copy small, .empty-seat-label { color: #8ca0af; font: 700 9px/1 var(--font-heading); letter-spacing: .1em; }.empty-seat-label { margin-left: 4px; }.remove-player { position: absolute; top: 9px; right: 10px; width: 21px; height: 21px; border: 0; color: #9f7777; background: transparent; cursor: pointer; font-size: 16px; }.remove-player:hover { color: #df8888; }.room-sidebar { display: grid; gap: 18px; }.side-panel { padding: 24px; }.side-panel h3 { margin: 12px 0 10px; color: #eff4f8; font-size: 20px; }.side-panel p { margin: 0; color: #99aaba; font-size: 14px; line-height: 1.65; }.quick-fill-button { width: 100%; min-height: 43px; margin-top: 20px; border-color: rgba(217, 181, 93, .72); color: #e7c469; background: rgba(217, 181, 93, .08); font: 700 10px/1 var(--font-heading); letter-spacing: .08em; }.quick-fill-button:hover:not(:disabled) { border-color: #e6c76c; color: #fff0b5; background: rgba(217, 181, 93, .14); }.add-form { margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(180, 204, 222, .12); }.add-ai-button { width: 100%; margin-top: 4px; }.game-ready { background: linear-gradient(155deg, #132334, #0b141f); }.start-game-button, .leave-button { width: 100%; min-height: 45px; margin-top: 24px; border-radius: 7px; cursor: pointer; font: 700 10px/1 var(--font-heading); letter-spacing: .09em; }.start-game-button { border: 1px solid #e6c76c; color: #100f0b; background: linear-gradient(135deg, #e8ca70, #bd8d31); }.start-game-button span { margin-right: 7px; }.start-game-button:disabled { border-color: rgba(180, 204, 222, .16); color: #8192a2; background: #101a25; cursor: not-allowed; }.leave-button { margin-top: 10px; border: 1px solid rgba(180, 204, 222, .16); color: #a7b6c2; background: transparent; }.leave-button:hover { border-color: rgba(192, 125, 125, .55); color: #dc8a8a; }
+@media (max-width: 900px) { .detail-layout { grid-template-columns: 1fr; }.room-sidebar { grid-template-columns: repeat(2, 1fr); }.seat-grid { grid-template-columns: repeat(3, 1fr); } }.room-intro-actions { flex-wrap: wrap; }
+@media (max-width: 620px) { .room-intro { display: block; }.room-intro-actions { margin-top: 24px; }.room-sidebar, .seat-grid { grid-template-columns: 1fr; }.roster-panel, .side-panel { padding: 20px; } }
 </style>

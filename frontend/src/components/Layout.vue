@@ -2,162 +2,115 @@
   <el-container>
     <el-header>
       <div class="header-content">
-        <div class="logo">
-          <h1>AI狼人杀游戏</h1>
+        <div class="logo" @click="$router.push('/')">
+          <span class="logo-icon">🛡️</span>
+          <span class="logo-text">{{ $locale === 'zh-CN' ? 'AI狼人杀' : 'AI Werewolf' }}</span>
         </div>
         <div class="nav">
           <el-menu :default-active="activeIndex" class="el-menu-demo" mode="horizontal" @select="handleSelect">
-            <el-menu-item index="home">首页</el-menu-item>
-            <el-menu-item index="roomList">房间列表</el-menu-item>
-            <el-menu-item index="createRoom">创建房间</el-menu-item>
-            <el-menu-item index="apiConfig">AI玩家管理</el-menu-item>
-            <el-menu-item index="voiceConfig">语音配置</el-menu-item>
-            <el-menu-item index="gameRecords">游戏记录</el-menu-item>
+            <el-menu-item index="home">{{ $t('nav.home') }}</el-menu-item>
+            <el-menu-item index="roomList">{{ $t('nav.roomList') }}</el-menu-item>
+            <el-menu-item index="createRoom">{{ $t('nav.createRoom') }}</el-menu-item>
+            <el-menu-item index="apiConfig">{{ $t('nav.aiPlayerManagement') }}</el-menu-item>
+            <el-menu-item index="voiceConfig">{{ $t('nav.voiceConfig') }}</el-menu-item>
+            <el-menu-item index="gameRecords">{{ $t('nav.gameRecords') }}</el-menu-item>
           </el-menu>
         </div>
-        <div class="user-info">
-          <template v-if="userStore.getIsLoggedIn">
-            <el-dropdown>
-              <span class="user-name">{{ userStore.getUserInfo?.nickname || userStore.getUserInfo?.username }}</span>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item>个人中心</el-dropdown-item>
-                  <el-dropdown-item @click="logout">退出登录</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </template>
-          <template v-else>
-            <el-button type="primary" @click="goToLogin">登录</el-button>
-            <el-button type="info" @click="goToRegister">注册</el-button>
-          </template>
+        <div class="header-actions">
+          <el-tooltip :content="$locale === 'zh-CN' ? 'Switch to English' : '切换到中文'" placement="bottom">
+            <button class="lang-btn" @click="toggleLang">
+              {{ $locale === 'zh-CN' ? 'EN' : '中' }}
+            </button>
+          </el-tooltip>
+          <div class="user-info">
+            <template v-if="userStore.getIsLoggedIn">
+              <el-dropdown>
+                <span class="user-name">{{ userStore.getUserInfo?.nickname || userStore.getUserInfo?.username }}</span>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item>{{ $t('nav.personalCenter') }}</el-dropdown-item>
+                    <el-dropdown-item @click="logout">{{ $t('nav.logout') }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </template>
+            <template v-else>
+              <el-button type="primary" size="small" @click="goToLogin">{{ $t('nav.login') }}</el-button>
+              <el-button size="small" class="ghost-btn" @click="goToRegister">{{ $t('nav.register') }}</el-button>
+            </template>
+          </div>
         </div>
       </div>
     </el-header>
-    <el-main>
-      <!-- 面包屑导航 -->
-      <el-breadcrumb class="breadcrumb" separator="/">
+    <el-main :class="{ 'home-main': route.path === '/' }">
+      <el-breadcrumb v-if="route.path !== '/'" class="breadcrumb" separator="·">
         <el-breadcrumb-item v-for="item in breadcrumbItems" :key="item.path" :to="item.path">
           {{ item.title }}
         </el-breadcrumb-item>
       </el-breadcrumb>
-      
       <router-view />
     </el-main>
     <el-footer>
       <div class="footer-content">
-        <p>© 2026 AI狼人杀游戏 版权所有</p>
-        <p>基于Spring Boot + Vue 3开发</p>
+        <div class="footer-ornament">✦</div>
+        <p>{{ $t('home.copyright') }}</p>
+        <p class="footer-sub">{{ $t('home.poweredBy') }}</p>
       </div>
     </el-footer>
   </el-container>
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, getCurrentInstance } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
+
+const { proxy } = getCurrentInstance()
+const $t = proxy.$t
+const $locale = proxy.$locale
+const $toggleLocale = proxy.$toggleLocale
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const activeIndex = ref('home')
 
-// 面包屑导航配置
 const breadcrumbItems = computed(() => {
   const path = route.path
-  const items = []
-  
-  // 添加首页
-  items.push({ title: '首页', path: '/' })
-  
-  // 根据当前路径添加面包屑
-  if (path.includes('/game/room/list')) {
-    items.push({ title: '游戏管理', path: '/game/room/list' })
-    items.push({ title: '房间列表', path: '/game/room/list' })
-  } else if (path.includes('/game/room/create')) {
-    items.push({ title: '游戏管理', path: '/game/room/list' })
-    items.push({ title: '创建房间', path: '/game/room/create' })
-  } else if (path.includes('/game/room/')) {
-    items.push({ title: '游戏管理', path: '/game/room/list' })
-    items.push({ title: '房间详情', path: path })
-  } else if (path.includes('/game/play/')) {
-    items.push({ title: '游戏管理', path: '/game/room/list' })
-    items.push({ title: '游戏中', path: path })
-  } else if (path.includes('/api')) {
-    items.push({ title: 'AI玩家管理', path: '/api' })
-  } else if (path.includes('/voice')) {
-    items.push({ title: '语音配置', path: '/voice' })
-  } else if (path.includes('/records')) {
-    items.push({ title: '游戏记录', path: '/records' })
-  }
-  
+  const items = [{ title: $t('breadcrumb.home'), path: '/' }]
+  if (path.includes('/game/room/list')) { items.push({ title: $t('breadcrumb.gameManagement'), path: '/game/room/list' }, { title: $t('breadcrumb.roomList'), path: '/game/room/list' }) }
+  else if (path.includes('/game/room/create')) { items.push({ title: $t('breadcrumb.gameManagement'), path: '/game/room/list' }, { title: $t('breadcrumb.createRoom'), path: '/game/room/create' }) }
+  else if (path.includes('/game/room/')) { items.push({ title: $t('breadcrumb.gameManagement'), path: '/game/room/list' }, { title: $t('breadcrumb.roomDetail'), path: path }) }
+  else if (path.includes('/game/play/')) { items.push({ title: $t('breadcrumb.gameManagement'), path: '/game/room/list' }, { title: $t('breadcrumb.inGame'), path: path }) }
+  else if (path.includes('/ai-players')) { items.push({ title: $t('breadcrumb.aiPlayerManagement'), path: '/ai-players' }) }
+  else if (path.includes('/voice')) { items.push({ title: $t('breadcrumb.voiceConfig'), path: '/voice' }) }
+  else if (path.includes('/records')) { items.push({ title: $t('breadcrumb.gameRecords'), path: '/records' }) }
   return items
 })
 
-onMounted(() => {
-  userStore.loadUserInfo()
-  updateActiveIndex()
-})
-
-// 监听路由变化更新激活的菜单项
-watch(() => route.path, () => {
-  updateActiveIndex()
-})
+onMounted(() => { userStore.loadUserInfo(); updateActiveIndex() })
+watch(() => route.path, () => updateActiveIndex())
 
 const updateActiveIndex = () => {
-  const path = route.path
-  if (path === '/') {
-    activeIndex.value = 'home'
-  } else if (path.includes('room/list')) {
-    activeIndex.value = 'roomList'
-  } else if (path.includes('room/create')) {
-    activeIndex.value = 'createRoom'
-  } else if (path.includes('/api')) {
-    activeIndex.value = 'apiConfig'
-  } else if (path.includes('/voice')) {
-    activeIndex.value = 'voiceConfig'
-  } else if (path.includes('/records')) {
-    activeIndex.value = 'gameRecords'
-  }
+  const p = route.path
+  if (p === '/') activeIndex.value = 'home'
+  else if (p.includes('room/list')) activeIndex.value = 'roomList'
+  else if (p.includes('room/create')) activeIndex.value = 'createRoom'
+  else if (p.includes('/ai-players')) activeIndex.value = 'apiConfig'
+  else if (p.includes('/voice')) activeIndex.value = 'voiceConfig'
+  else if (p.includes('/records')) activeIndex.value = 'gameRecords'
 }
 
 const handleSelect = (key) => {
   activeIndex.value = key
-  switch (key) {
-    case 'home':
-      router.push('/')
-      break
-    case 'roomList':
-      router.push('/game/room/list')
-      break
-    case 'createRoom':
-      router.push('/game/room/create')
-      break
-    case 'apiConfig':
-      router.push('/api')
-      break
-    case 'voiceConfig':
-      router.push('/voice')
-      break
-    case 'gameRecords':
-      router.push('/records')
-      break
-  }
+  const m = { home: '/', roomList: '/game/room/list', createRoom: '/game/room/create', apiConfig: '/ai-players', voiceConfig: '/voice', gameRecords: '/records' }
+  if (m[key]) router.push(m[key])
 }
 
-const goToLogin = () => {
-  router.push('/login')
-}
-
-const goToRegister = () => {
-  router.push('/register')
-}
-
-const logout = () => {
-  userStore.logout()
-  router.push('/login')
-}
+const goToLogin = () => router.push('/login')
+const goToRegister = () => router.push('/register')
+const logout = () => { userStore.logout(); router.push('/login') }
+const toggleLang = () => { $toggleLocale(); location.reload() }
 </script>
 
 <style scoped>
@@ -165,38 +118,89 @@ const logout = () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
+  padding: 0 24px;
   height: 100%;
 }
 
-.logo h1 {
-  margin: 0;
-  font-size: 24px;
-  color: #fff;
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+.logo-icon {
+  font-size: 28px;
+  filter: drop-shadow(0 0 6px rgba(201,169,110,0.4));
+}
+.logo-text {
+  font-family: var(--font-heading);
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 20px rgba(201,169,110,0.3);
 }
 
-.nav {
-  flex: 1;
-  margin: 0 40px;
+.nav { flex: 1; margin: 0 20px; overflow: hidden; }
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.lang-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 4px;
+  font-family: var(--font-heading);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--gold);
+  background: rgba(201,169,110,0.08);
+  border: 1px solid rgba(201,169,110,0.3);
+  cursor: pointer;
+  transition: all var(--transition-normal);
+}
+.lang-btn:hover {
+  background: rgba(201,169,110,0.18);
+  border-color: var(--gold);
+  box-shadow: var(--shadow-gold);
+  transform: scale(1.05);
+}
+
+.ghost-btn {
+  background: transparent !important;
+  border: 1px solid rgba(201,169,110,0.3) !important;
+  color: var(--text-secondary) !important;
+}
+.ghost-btn:hover {
+  border-color: var(--gold) !important;
+  color: var(--gold) !important;
 }
 
 .user-name {
-  color: #fff;
+  color: var(--text-secondary);
   cursor: pointer;
-  margin-right: 10px;
+  font-family: var(--font-heading);
+  font-size: 0.85rem;
 }
+.user-name:hover { color: var(--gold); }
 
-.breadcrumb {
-  margin-bottom: 20px;
-}
+.user-info { display: flex; align-items: center; gap: 8px; }
 
-.footer-content {
-  text-align: center;
-}
+.breadcrumb { margin-bottom: 20px; }
+:deep(.home-main) { padding: 0 !important; overflow: hidden; }
 
-.footer-content p {
-  margin: 5px 0;
-  color: #909399;
-  font-size: 14px;
+.footer-content { text-align: center; padding: 10px 0; }
+.footer-content p { margin: 4px 0; color: var(--text-muted); font-size: 0.85rem; }
+.footer-sub { font-size: 0.75rem !important; opacity: 0.6; }
+.footer-ornament {
+  font-size: 1.2rem;
+  color: var(--gold-dark);
+  margin-bottom: 8px;
+  opacity: 0.6;
 }
 </style>

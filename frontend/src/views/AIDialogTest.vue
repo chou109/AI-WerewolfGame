@@ -1,480 +1,150 @@
 <template>
-  <div class="ai-dialog-test">
-    <h2>AI玩家对话测试</h2>
-    <div class="test-container">
-      <!-- AI玩家选择 -->
-      <div class="ai-player-select">
-        <h3>选择AI玩家</h3>
-        <el-select v-model="selectedAiPlayerId" placeholder="请选择AI玩家" style="width: 100%">
-          <el-option
-            v-for="aiPlayer in aiPlayers"
-            :key="aiPlayer.id"
-            :label="aiPlayer.name"
-            :value="aiPlayer.id"
-          />
+  <div class="dialog-lab">
+    <section class="lab-intro">
+      <div>
+        <span class="lab-kicker">01 / {{ $locale === 'zh-CN' ? '推理实验台' : 'REASONING LAB' }}</span>
+        <h2>{{ $t('aiDialogTest.title') }}</h2>
+        <p>{{ $locale === 'zh-CN' ? '选择一位 AI 玩家，直接检验模型风格、上下文理解与对话响应。' : 'Select an AI player to test its style, context awareness, and conversation responses.' }}</p>
+      </div>
+      <div class="agent-selector">
+        <label>{{ $t('aiDialogTest.selectAiPlayer') }}</label>
+        <el-select v-model="selectedAiPlayerId" :placeholder="$t('aiDialogTest.selectAiPlayer')">
+          <el-option v-for="aiPlayer in aiPlayers" :key="aiPlayer.id" :label="aiPlayer.name" :value="aiPlayer.id" />
         </el-select>
       </div>
+    </section>
 
-      <!-- 对话区域 -->
-      <div class="dialog-area">
-        <h3>对话历史</h3>
-        <div class="dialog-history">
-          <div
-            v-for="(message, index) in dialogHistory"
-            :key="index"
-            :class="['message-item', message.role === 'user' ? 'user-message' : 'ai-message']"
-          >
-            <div class="message-header">
-              <span class="message-role">{{ message.role === 'user' ? '我' : selectedAiPlayer?.name }}</span>
-              <span class="message-time">{{ message.time }}</span>
+    <section class="lab-layout">
+      <main class="conversation-panel">
+        <div class="conversation-heading">
+          <div><span>SESSION</span><h3>{{ $t('aiDialogTest.dialogHistory') }}</h3></div>
+          <button @click="clearHistory" :disabled="!dialogHistory.length">{{ $t('aiDialogTest.clearHistory') }}</button>
+        </div>
+        <div ref="historyRef" class="dialog-history">
+          <div v-if="!dialogHistory.length" class="dialog-empty">
+            <span>✦</span>
+            <h4>{{ $locale === 'zh-CN' ? '等待第一条消息' : 'WAITING FOR A MESSAGE' }}</h4>
+            <p>{{ $locale === 'zh-CN' ? '选择 AI 玩家并输入一段对话，开始测试。' : 'Choose an AI player and send a message to begin testing.' }}</p>
+          </div>
+          <article v-for="(message, index) in dialogHistory" :key="index" class="message-row" :class="message.role === 'user' ? 'user-message' : 'ai-message'">
+            <span class="message-avatar">{{ message.role === 'user' ? '◌' : '✦' }}</span>
+            <div class="message-bubble">
+              <div class="message-meta"><b>{{ message.role === 'user' ? $t('aiDialogTest.me') : (selectedAiPlayer?.name || 'AI') }}</b><time>{{ message.time }}</time></div>
+              <p>{{ message.content }}</p>
             </div>
-            <div class="message-content">{{ message.content }}</div>
-          </div>
+          </article>
         </div>
-
-        <!-- 输入区域 -->
-        <div class="input-area">
-          <el-input
-            v-model="inputMessage"
-            type="textarea"
-            :rows="3"
-            placeholder="请输入对话内容..."
-            resize="none"
-          />
-          <div class="input-actions">
-            <el-button type="primary" @click="sendMessage" :loading="sending">发送</el-button>
-            <el-button @click="clearHistory">清空历史</el-button>
-          </div>
+        <div class="composer">
+          <el-input v-model="inputMessage" type="textarea" :rows="3" :placeholder="$t('aiDialogTest.inputPlaceholder')" resize="none" @keydown.enter.ctrl="sendMessage" />
+          <div class="composer-footer"><span>{{ $locale === 'zh-CN' ? 'Ctrl + Enter 发送' : 'CTRL + ENTER TO SEND' }}</span><el-button type="primary" @click="sendMessage" :loading="sending">{{ $t('aiDialogTest.send') }} <b>→</b></el-button></div>
         </div>
-      </div>
+      </main>
 
-      <!-- AI玩家信息 -->
-      <div v-if="selectedAiPlayer" class="ai-player-info">
-        <h3>AI玩家信息</h3>
-        <el-card>
-          <el-descriptions :column="1">
-            <el-descriptions-item label="名称">{{ selectedAiPlayer.name }}</el-descriptions-item>
-            <el-descriptions-item label="模型类型">{{ selectedAiPlayer.modelType }}</el-descriptions-item>
-            <el-descriptions-item label="模型名称">{{ selectedAiPlayer.modelName }}</el-descriptions-item>
-            <el-descriptions-item label="个性">{{ selectedAiPlayer.personality || '无' }}</el-descriptions-item>
-            <el-descriptions-item label="策略">{{ selectedAiPlayer.strategy || '无' }}</el-descriptions-item>
-            <el-descriptions-item label="温度">{{ selectedAiPlayer.temperature || 0.7 }}</el-descriptions-item>
-            <el-descriptions-item label="最大tokens">{{ selectedAiPlayer.maxTokens || 1000 }}</el-descriptions-item>
-          </el-descriptions>
-        </el-card>
-      </div>
-    </div>
+      <aside class="agent-panel">
+        <span class="side-kicker">AGENT PROFILE</span>
+        <template v-if="selectedAiPlayer">
+          <div class="agent-emblem">✦</div>
+          <h3>{{ selectedAiPlayer.name }}</h3>
+          <p class="agent-model">{{ selectedAiPlayer.modelName }}</p>
+          <div class="agent-rule"></div>
+          <dl>
+            <div><dt>{{ $t('aiDialogTest.modelType') }}</dt><dd>{{ selectedAiPlayer.modelType }}</dd></div>
+            <div><dt>{{ $t('aiDialogTest.personality') }}</dt><dd>{{ selectedAiPlayer.personality || '—' }}</dd></div>
+            <div><dt>{{ $t('aiDialogTest.strategy') }}</dt><dd>{{ selectedAiPlayer.strategy || '—' }}</dd></div>
+            <div><dt>{{ $t('aiDialogTest.temperature') }}</dt><dd>{{ selectedAiPlayer.temperature || 0.7 }}</dd></div>
+            <div><dt>{{ $t('aiDialogTest.maxTokens') }}</dt><dd>{{ selectedAiPlayer.maxTokens || 1000 }}</dd></div>
+          </dl>
+        </template>
+        <template v-else>
+          <div class="agent-placeholder">◌</div>
+          <h3>{{ $locale === 'zh-CN' ? '尚未选择玩家' : 'NO AGENT SELECTED' }}</h3>
+          <p>{{ $locale === 'zh-CN' ? '从上方选择一位已配置的 AI 玩家。' : 'Choose a configured AI player from above.' }}</p>
+        </template>
+      </aside>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick, getCurrentInstance } from 'vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 
+const { proxy } = getCurrentInstance()
+const $t = proxy.$t
+const $locale = proxy.$locale
 const aiPlayers = ref([])
 const selectedAiPlayerId = ref(null)
 const inputMessage = ref('')
 const dialogHistory = ref([])
 const sending = ref(false)
+const historyRef = ref(null)
 
-// 获取选中的AI玩家信息
-const selectedAiPlayer = computed(() => {
-  return aiPlayers.value.find(player => player.id === selectedAiPlayerId.value)
-})
+const selectedAiPlayer = computed(() => aiPlayers.value.find(player => player.id === selectedAiPlayerId.value))
+onMounted(fetchAiPlayers)
 
-// 加载AI玩家列表
-onMounted(() => {
-  fetchAiPlayers()
-})
-
-const fetchAiPlayers = async () => {
+async function fetchAiPlayers() {
   try {
     const response = await axios.get('/ai/player/available')
-    if (response.data.code === 200) {
-      aiPlayers.value = response.data.data
-    }
-  } catch (error) {
-    console.error('Fetch AI players error:', error)
-    ElMessage.error('获取AI玩家列表失败')
+    if (response.data.code === 200) aiPlayers.value = response.data.data
+  } catch {
+    ElMessage.error($t('aiPlayer.fetchListFailed'))
   }
 }
 
-// 清理API密钥函数
-const cleanApiKey = (apiKey) => {
-  let cleanedKey = apiKey || ''
-  // 移除反引号
-  cleanedKey = cleanedKey.replace(/`/g, '')
-  // 移除多余空格
-  cleanedKey = cleanedKey.trim()
-  // 移除首尾的引号
-  cleanedKey = cleanedKey.replace(/^['"]|['"]$/g, '')
-  return cleanedKey
+const cleanApiKey = apiKey => (apiKey || '').replace(/`/g, '').trim().replace(/^['"]|['"]$/g, '')
+
+const validateApiConfig = aiPlayer => {
+  let url = aiPlayer.apiBaseUrl || ''
+  if (!url.startsWith('http')) url = `https://${url}`
+  url = url.replace(/\/$/, '')
+  const isAnthropic = ['claude', 'anthropic'].includes(aiPlayer.modelType)
+  const fullUrl = `${url}${isAnthropic ? '/messages' : '/chat/completions'}`
+  const headers = { 'Content-Type': 'application/json' }
+  if (isAnthropic) headers['x-api-key'] = cleanApiKey(aiPlayer.apiKey)
+  else headers.Authorization = `Bearer ${cleanApiKey(aiPlayer.apiKey)}`
+  return { fullUrl, headers, isAnthropic }
 }
 
-// API配置验证方法
-const validateApiConfig = (aiPlayer) => {
-  const apiUrl = aiPlayer.apiBaseUrl || ''
-  const apiKey = aiPlayer.apiKey || ''
-  
-  // URL格式检查
-  let finalApiUrl = apiUrl
-  if (!finalApiUrl.startsWith('http')) {
-    finalApiUrl = 'https://' + finalApiUrl
-  }
-  if (finalApiUrl.endsWith('/')) {
-    finalApiUrl = finalApiUrl.substring(0, finalApiUrl.length - 1)
-  }
-  
-  // 清理API密钥
-  const cleanedApiKey = cleanApiKey(apiKey)
-  
-  // 完整请求URL构建
-  let fullUrl = finalApiUrl
-  
-  // 根据模型类型和API URL选择正确的端点
-  if (finalApiUrl.includes('modelscope.cn')) {
-    // ModelScope API特殊处理
-    if (finalApiUrl.includes('/v1')) {
-      // OpenAI风格API
-      fullUrl += '/chat/completions'
-    } else {
-      // 基础API
-      fullUrl += '/v1/chat/completions'
-    }
-  } else if (aiPlayer.modelType === 'modelscope' || aiPlayer.modelType === 'deepseek' || aiPlayer.modelType === 'qwen' || aiPlayer.modelType === 'glm' || aiPlayer.modelType === 'moonshot') {
-    // 相关模型类型
-    fullUrl += '/chat/completions'
-  } else if (aiPlayer.modelType === 'openai' || aiPlayer.modelType === 'gpt') {
-    // OpenAI请求体
-    fullUrl += '/chat/completions'
-  } else if (aiPlayer.modelType === 'claude' || aiPlayer.modelType === 'anthropic') {
-    // Anthropic请求体
-    fullUrl += '/messages'
-  } else {
-    // 默认端点
-    fullUrl += '/chat/completions'
-  }
-  
-  // 认证方式设置
-  const headers = {
-    'Content-Type': 'application/json'
-  }
-  
-  if (finalApiUrl.includes('modelscope.cn') || aiPlayer.modelType === 'modelscope' || aiPlayer.modelType === 'deepseek' || aiPlayer.modelType === 'qwen' || aiPlayer.modelType === 'glm' || aiPlayer.modelType === 'moonshot') {
-    headers['Authorization'] = `Bearer ${cleanedApiKey}`
-  } else if (aiPlayer.modelType === 'claude' || aiPlayer.modelType === 'anthropic') {
-    headers['x-api-key'] = cleanedApiKey
-  } else {
-    headers['Authorization'] = `Bearer ${cleanedApiKey}`
-  }
-  
-  return {
-    fullUrl,
-    headers,
-    isValid: true
-  }
-}
+const scrollHistory = () => nextTick(() => { if (historyRef.value) historyRef.value.scrollTop = historyRef.value.scrollHeight })
 
-// 发送消息
-const sendMessage = async () => {
-  if (!selectedAiPlayer.value) {
-    ElMessage.warning('请先选择AI玩家')
-    return
-  }
-
-  if (!inputMessage.value.trim()) {
-    ElMessage.warning('请输入对话内容')
-    return
-  }
-
-  // 添加用户消息到历史
-  const userMessage = {
-    role: 'user',
-    content: inputMessage.value.trim(),
-    time: new Date().toLocaleString()
-  }
-  dialogHistory.value.push(userMessage)
-
-  // 清空输入框
-  const messageContent = inputMessage.value.trim()
+async function sendMessage() {
+  if (!selectedAiPlayer.value) { ElMessage.warning($t('aiDialogTest.selectPlayerFirst')); return }
+  if (!inputMessage.value.trim()) { ElMessage.warning($t('aiDialogTest.enterContent')); return }
+  const content = inputMessage.value.trim()
+  dialogHistory.value.push({ role: 'user', content, time: new Date().toLocaleTimeString() })
   inputMessage.value = ''
-
+  scrollHistory()
   sending.value = true
   try {
     const aiPlayer = selectedAiPlayer.value
-    
-    // 使用API配置验证方法
-    const apiConfig = validateApiConfig(aiPlayer)
-    
-    if (!apiConfig.isValid) {
-      throw new Error('API配置验证失败')
-    }
-    
-    // 构建请求体
-    let requestBody = {}
-    
-    if (aiPlayer.modelType === 'modelscope' || aiPlayer.modelType === 'deepseek' || aiPlayer.modelType === 'qwen' || aiPlayer.modelType === 'glm' || aiPlayer.modelType === 'moonshot') {
-      // ModelScope 及相关模型请求体
-      requestBody = {
-        model: aiPlayer.modelName,
-        messages: [
-          {
-            role: 'system',
-            content: `你是${aiPlayer.name}，${aiPlayer.personality || '一个普通的AI助手'}。${aiPlayer.strategy || ''}`
-          },
-          ...dialogHistory.value.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          }))
-        ],
-        temperature: aiPlayer.temperature || 0.7,
-        max_tokens: aiPlayer.maxTokens || 1000
-      }
-    } else if (aiPlayer.modelType === 'openai' || aiPlayer.modelType === 'gpt') {
-      // OpenAI 请求体
-      requestBody = {
-        model: aiPlayer.modelName,
-        messages: [
-          {
-            role: 'system',
-            content: `你是${aiPlayer.name}，${aiPlayer.personality || '一个普通的AI助手'}。${aiPlayer.strategy || ''}`
-          },
-          ...dialogHistory.value.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          }))
-        ],
-        temperature: aiPlayer.temperature || 0.7,
-        max_tokens: aiPlayer.maxTokens || 1000
-      }
-    } else if (aiPlayer.modelType === 'claude' || aiPlayer.modelType === 'anthropic') {
-      // Anthropic 请求体
-      requestBody = {
-        model: aiPlayer.modelName,
-        messages: [
-          {
-            role: 'user',
-            content: `你是${aiPlayer.name}，${aiPlayer.personality || '一个普通的AI助手'}。${aiPlayer.strategy || ''}\n\n${dialogHistory.value.map(msg => `${msg.role}: ${msg.content}`).join('\n')}`
-          }
-        ],
-        temperature: aiPlayer.temperature || 0.7,
-        max_tokens: aiPlayer.maxTokens || 1000
-      }
-    } else {
-      // 默认请求体
-      requestBody = {
-        model: aiPlayer.modelName,
-        messages: [
-          {
-            role: 'system',
-            content: `你是${aiPlayer.name}，${aiPlayer.personality || '一个普通的AI助手'}。${aiPlayer.strategy || ''}`
-          },
-          ...dialogHistory.value.map(msg => ({
-            role: msg.role,
-            content: msg.content
-          }))
-        ],
-        temperature: aiPlayer.temperature || 0.7,
-        max_tokens: aiPlayer.maxTokens || 1000
-      }
-    }
-    
-    const response = await axios.post(apiConfig.fullUrl, requestBody, {
-      headers: apiConfig.headers,
-      timeout: 30000
-    })
-
-    // 处理响应
-    if (aiPlayer.modelType === 'modelscope' || aiPlayer.modelType === 'deepseek' || aiPlayer.modelType === 'qwen' || aiPlayer.modelType === 'glm' || aiPlayer.modelType === 'moonshot' || aiPlayer.modelType === 'openai' || aiPlayer.modelType === 'gpt') {
-      // ModelScope、DeepSeek、Qwen、GLM、Moonshot、OpenAI 响应处理
-      if (response.data && response.data.choices && response.data.choices.length > 0) {
-        const aiResponse = response.data.choices[0].message
-        if (aiResponse && aiResponse.content) {
-          // 添加AI回复到历史
-          dialogHistory.value.push({
-            role: 'assistant',
-            content: aiResponse.content.trim(),
-            time: new Date().toLocaleString()
-          })
-        }
-      } else {
-        throw new Error('AI响应格式不正确')
-      }
-    } else if (aiPlayer.modelType === 'claude' || aiPlayer.modelType === 'anthropic') {
-      // Anthropic 响应处理
-      if (response.data && response.data.content && response.data.content.length > 0) {
-        const aiResponse = response.data.content[0]
-        if (aiResponse && aiResponse.text) {
-          // 添加AI回复到历史
-          dialogHistory.value.push({
-            role: 'assistant',
-            content: aiResponse.text.trim(),
-            time: new Date().toLocaleString()
-          })
-        }
-      } else {
-        throw new Error('AI响应格式不正确')
-      }
-    } else {
-      // 默认响应处理
-      if (response.data && response.data.choices && response.data.choices.length > 0) {
-        const aiResponse = response.data.choices[0].message
-        if (aiResponse && aiResponse.content) {
-          // 添加AI回复到历史
-          dialogHistory.value.push({
-            role: 'assistant',
-            content: aiResponse.content.trim(),
-            time: new Date().toLocaleString()
-          })
-        }
-      } else {
-        throw new Error('AI响应格式不正确')
-      }
-    }
+    const config = validateApiConfig(aiPlayer)
+    const system = `You are ${aiPlayer.name}, ${aiPlayer.personality || 'an AI assistant'}. ${aiPlayer.strategy || ''}`
+    const requestBody = config.isAnthropic
+      ? { model: aiPlayer.modelName, max_tokens: aiPlayer.maxTokens || 1000, temperature: aiPlayer.temperature || 0.7, messages: [{ role: 'user', content: `${system}\n\n${dialogHistory.value.map(item => `${item.role}: ${item.content}`).join('\n')}` }] }
+      : { model: aiPlayer.modelName, temperature: aiPlayer.temperature || 0.7, max_tokens: aiPlayer.maxTokens || 1000, messages: [{ role: 'system', content: system }, ...dialogHistory.value.map(item => ({ role: item.role, content: item.content }))] }
+    const response = await axios.post(config.fullUrl, requestBody, { headers: config.headers, timeout: 30000 })
+    const reply = config.isAnthropic ? response.data?.content?.[0]?.text : response.data?.choices?.[0]?.message?.content
+    if (!reply) throw new Error('Invalid response format')
+    dialogHistory.value.push({ role: 'assistant', content: reply.trim(), time: new Date().toLocaleTimeString() })
   } catch (error) {
-    let errorMessage = '发送消息失败'
-    if (error.response?.status === 401) {
-      errorMessage = '认证失败：API Key 可能错误或已过期\n\n请检查：\n1. API Key是否正确复制\n2. API Key是否已过期\n3. 是否有该模型的访问权限\n4. API Key是否启用了对应模型的访问'
-    } else if (error.response?.status === 404) {
-      errorMessage = 'API端点不存在：请检查API Base URL是否正确'
-    } else if (error.response?.status === 429) {
-      errorMessage = '请求过于频繁：请稍后再试'
-    } else if (error.response?.status === 500) {
-      errorMessage = '服务器错误：请检查API服务状态'
-    } else if (error.message?.includes('ERR_NAME_NOT_RESOLVED')) {
-      errorMessage = '网络错误：DNS解析失败，请检查网络连接和DNS设置\n\n建议：\n1. 切换网络环境（如手机热点）\n2. 使用其他模型服务（如OpenAI）\n3. 检查DNS设置，尝试使用8.8.8.8'
-    } else if (error.message?.includes('Network Error')) {
-      errorMessage = '网络错误：无法连接到API服务，请检查网络连接'
-    } else if (error.message?.includes('timeout')) {
-      errorMessage = '请求超时：API响应时间过长，请检查网络连接'
-    } else if (error.message) {
-      errorMessage = `发送消息失败：${error.message}`
-    }
-    
+    const errorMessage = error.response?.status === 401 ? $t('aiDialogTest.authFailed') : error.response?.status === 429 ? $t('aiDialogTest.rateLimited') : error.message?.includes('timeout') ? $t('aiDialogTest.timeout') : `${$t('aiDialogTest.sendFailed')}: ${error.message || ''}`
     ElMessage.error(errorMessage)
-    
-    // 添加错误消息到历史
-    dialogHistory.value.push({
-      role: 'assistant',
-      content: `错误：${errorMessage}`,
-      time: new Date().toLocaleString()
-    })
+    dialogHistory.value.push({ role: 'assistant', content: `⚠ ${errorMessage}`, time: new Date().toLocaleTimeString() })
   } finally {
     sending.value = false
+    scrollHistory()
   }
 }
 
-// 清空历史
-const clearHistory = () => {
-  dialogHistory.value = []
-  ElMessage.success('对话历史已清空')
-}
+const clearHistory = () => { dialogHistory.value = []; ElMessage.success($t('aiDialogTest.historyCleared')) }
 </script>
 
 <style scoped>
-.ai-dialog-test {
-  padding: 20px;
-}
-
-.test-container {
-  display: flex;
-  flex-direction: column;
-  gap: 30px;
-}
-
-.ai-player-select {
-  max-width: 400px;
-}
-
-.dialog-area {
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.dialog-history {
-  max-height: 500px;
-  overflow-y: auto;
-  padding: 20px;
-  background-color: #f5f7fa;
-}
-
-.message-item {
-  margin-bottom: 20px;
-  padding: 12px;
-  border-radius: 8px;
-  max-width: 80%;
-}
-
-.user-message {
-  align-self: flex-end;
-  margin-left: auto;
-  background-color: #ecf5ff;
-  border: 1px solid #d9ecff;
-}
-
-.ai-message {
-  align-self: flex-start;
-  background-color: #ffffff;
-  border: 1px solid #e4e7ed;
-}
-
-.message-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: #909399;
-}
-
-.message-role {
-  font-weight: 500;
-  color: #606266;
-}
-
-.message-content {
-  font-size: 14px;
-  line-height: 1.5;
-  color: #303133;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.input-area {
-  border-top: 1px solid #e4e7ed;
-  padding: 20px;
-  background-color: #ffffff;
-}
-
-.input-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.ai-player-info {
-  max-width: 500px;
-}
-
-/* 滚动条样式 */
-.dialog-history::-webkit-scrollbar {
-  width: 6px;
-}
-
-.dialog-history::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 3px;
-}
-
-.dialog-history::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 3px;
-}
-
-.dialog-history::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
-}
+.dialog-lab { width: min(1240px, 100%); margin: 0 auto; padding: 26px 0 84px; }.lab-intro { display: flex; align-items: end; justify-content: space-between; gap: 30px; padding: 30px 0 38px; }.lab-kicker, .side-kicker { color: #d9b55d; font: 700 10px/1 var(--font-heading); letter-spacing: .18em; }.lab-intro h2 { margin: 14px 0 12px; color: #eef4f8; font-size: clamp(34px, 4vw, 50px); letter-spacing: -.045em; }.lab-intro p { max-width: 580px; margin: 0; color: #9dadbc; font-size: 16px; line-height: 1.65; }.agent-selector { width: 300px; }.agent-selector label { display: block; margin-bottom: 9px; color: #d9b55d; font: 700 10px/1 var(--font-heading); letter-spacing: .1em; }
+.lab-layout { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 18px; align-items: stretch; }.conversation-panel, .agent-panel { border: 1px solid rgba(180, 204, 222, .18); border-radius: 12px; background: linear-gradient(155deg, #101d2a, #0b141f); }.conversation-panel { display: flex; flex-direction: column; min-height: 650px; overflow: hidden; }.conversation-heading { display: flex; align-items: center; justify-content: space-between; padding: 22px 24px; border-bottom: 1px solid rgba(180, 204, 222, .14); }.conversation-heading span { color: #d9b55d; font: 700 10px/1 var(--font-heading); letter-spacing: .14em; }.conversation-heading h3 { margin: 9px 0 0; color: #eff4f8; font-size: 21px; }.conversation-heading button { border: 0; color: #9eafbe; background: transparent; cursor: pointer; font: 700 10px/1 var(--font-heading); letter-spacing: .09em; }.conversation-heading button:hover:not(:disabled) { color: #e3bd66; }.conversation-heading button:disabled { opacity: .35; cursor: not-allowed; }
+.dialog-history { flex: 1; overflow-y: auto; padding: 24px; background: radial-gradient(circle at 80% 0%, rgba(28, 51, 72, .38), transparent 35%); }.dialog-empty { display: grid; min-height: 350px; place-content: center; justify-items: center; text-align: center; }.dialog-empty span, .agent-placeholder { color: #d9b55d; font: 400 58px/.8 Georgia, serif; }.dialog-empty h4 { margin: 20px 0 9px; color: #edf3f7; font-size: 19px; }.dialog-empty p { max-width: 280px; margin: 0; color: #8fa1b1; font-size: 14px; line-height: 1.6; }.message-row { display: flex; gap: 11px; margin-bottom: 18px; }.message-row.user-message { flex-direction: row-reverse; }.message-avatar { display: grid; flex: 0 0 31px; width: 31px; height: 31px; place-items: center; border: 1px solid rgba(217, 181, 93, .3); border-radius: 50%; color: #dfb95e; font: 400 18px/1 Georgia, serif; }.message-bubble { max-width: min(78%, 600px); padding: 12px 14px; border: 1px solid rgba(180, 204, 222, .14); border-radius: 9px; background: #0a1420; }.user-message .message-bubble { border-color: rgba(217, 181, 93, .24); background: #182536; }.message-meta { display: flex; gap: 10px; align-items: center; margin-bottom: 7px; }.message-meta b { color: #e2bd66; font: 700 10px/1 var(--font-heading); letter-spacing: .08em; }.message-meta time { color: #728595; font-size: 11px; }.message-bubble p { margin: 0; color: #dbe5ec; font-size: 15px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.composer { padding: 16px; border-top: 1px solid rgba(180, 204, 222, .14); background: #0d1824; }.composer-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }.composer-footer > span { color: #718494; font: 700 9px/1 var(--font-heading); letter-spacing: .1em; }.composer-footer b { margin-left: 8px; font-size: 15px; }
+.agent-panel { padding: 24px; }.agent-emblem { margin: 45px 0 21px; color: #e3bd66; font: 400 64px/.7 Georgia, serif; }.agent-panel h3 { margin: 0 0 7px; overflow: hidden; color: #eff4f8; font-size: 24px; text-overflow: ellipsis; white-space: nowrap; }.agent-model { margin: 0; color: #9babba; font-size: 13px; word-break: break-all; }.agent-rule { height: 1px; margin: 24px 0; background: rgba(180, 204, 222, .15); }.agent-panel dl { display: grid; gap: 17px; margin: 0; }.agent-panel dl div { display: grid; gap: 6px; }.agent-panel dt { color: #7f91a0; font: 700 9px/1 var(--font-heading); letter-spacing: .12em; }.agent-panel dd { margin: 0; color: #d9e2e9; font-size: 14px; line-height: 1.45; word-break: break-word; }.agent-placeholder { margin: 110px 0 24px; }.agent-panel > p { color: #91a2b1; font-size: 14px; line-height: 1.6; }
+@media (max-width: 850px) { .lab-intro { display: block; }.agent-selector { width: min(100%, 360px); margin-top: 24px; }.lab-layout { grid-template-columns: 1fr; }.agent-panel { display: none; } }
 </style>

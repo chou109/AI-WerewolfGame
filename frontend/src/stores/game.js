@@ -121,7 +121,7 @@ export const useGameStore = defineStore('game', {
         return false
       }
     },
-    async getGameRecords(roomId) {
+    async fetchGameRecords(roomId) {
       try {
         const response = await axios.get(`/game/record/list/${roomId}`)
         if (response.data.code === 200) {
