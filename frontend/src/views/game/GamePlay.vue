@@ -349,7 +349,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import { useTypewriter } from '../../composables/useTypewriter.js'
-import { loadVoiceConfig, speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from '../../composables/useSpeechSynthesis.js'
+import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from '../../composables/useSpeechSynthesis.js'
 import { PACK_WOLF_ROLES, WEREWOLF_KNOWLEDGE, WOLF_TEAM_ROLES, getBoardRules, getRoleSummary, isPackWolfRole, isWolfTeamRole } from '../../game/rules.js'
 
 const { proxy } = getCurrentInstance()
@@ -444,14 +444,16 @@ const sheriffDirection = ref('clockwise')
 const sheriffElectionDone = ref(false)
 const sheriffBadgeLost = ref(false)
 const publicRoleClaims = reactive({})
+const publicMiracleClaims = reactive({})
 const lastExiledPlayerId = ref(null)
-const lastWordsGiven = ref(false)
+const firstNightLastWordsPlayerIds = new Set()
+const firstDayLastWordsGiven = ref(false)
 const dayInterrupted = ref(false)
 const resumeStage = ref('night')
 const silencedPlayerId = ref(null)
 const bonusDayPending = ref(0)
 const bonusNightPending = ref(0)
-const miracleMerchantState = reactive({ used: false, merchantId: null, luckyId: null, skill: null, pendingDeath: false, giftResolved: false })
+const miracleMerchantState = reactive({ used: false, merchantId: null, luckyId: null, skill: null, pendingDeath: false, transactionFailed: false, giftResolved: false })
 const wolfBeautyState = reactive({ previousTargetId: null, targetId: null })
 const idiotFlippedIds = new Set()
 const bomberSuppressedIds = new Set()
@@ -487,6 +489,7 @@ let activeTypewriterCompleteHandler = null
 let decisionWindowTimer = null
 let speechPausedByGame = false
 let pauseWaiters = []
+let refereeSpeechBarrier = Promise.resolve()
 let hunterSkillUsed = new Set()
 let wolfKingSkillUsed = new Set()
 let knightSkillUsed = new Set()
@@ -791,7 +794,7 @@ const clearAndAssignReactive = (target, source) => {
   Object.assign(target, source || {})
 }
 const buildGameSnapshot = stage => ({
-  version: 2,
+  version: 3,
   savedAt: Date.now(),
   roomId: Number(roomId),
   resumeStage: stage || resumeStage.value || 'night',
@@ -822,8 +825,10 @@ const buildGameSnapshot = stage => ({
   sheriffElectionDone: sheriffElectionDone.value,
   sheriffBadgeLost: sheriffBadgeLost.value,
   publicRoleClaims: snapshotClone(publicRoleClaims),
+  publicMiracleClaims: snapshotClone(publicMiracleClaims),
   lastExiledPlayerId: lastExiledPlayerId.value,
-  lastWordsGiven: lastWordsGiven.value,
+  firstNightLastWordsPlayerIds: [...firstNightLastWordsPlayerIds],
+  firstDayLastWordsGiven: firstDayLastWordsGiven.value,
   dayInterrupted: dayInterrupted.value,
   silencedPlayerId: silencedPlayerId.value,
   bonusDayPending: bonusDayPending.value,
@@ -901,8 +906,18 @@ const restoreGameSnapshot = async () => {
   sheriffElectionDone.value = Boolean(snapshot.sheriffElectionDone)
   sheriffBadgeLost.value = Boolean(snapshot.sheriffBadgeLost)
   clearAndAssignReactive(publicRoleClaims, snapshot.publicRoleClaims)
+  clearAndAssignReactive(publicMiracleClaims, snapshot.publicMiracleClaims)
   lastExiledPlayerId.value = snapshot.lastExiledPlayerId || null
-  lastWordsGiven.value = Boolean(snapshot.lastWordsGiven)
+  firstNightLastWordsPlayerIds.clear()
+  const legacyMessages = Array.isArray(snapshot.dialogMessages) ? snapshot.dialogMessages : []
+  const savedNightLastWords = Array.isArray(snapshot.firstNightLastWordsPlayerIds)
+    ? snapshot.firstNightLastWordsPlayerIds
+    : legacyMessages.filter(message => /首夜出局玩家，请发表遗言/.test(message.content || '')).map(message => {
+        const number = Number(String(message.content).match(/(\d+)号/)?.[1])
+        return players.value.find(player => Number(player.playerNumber) === number)?.id
+      }).filter(Boolean)
+  savedNightLastWords.forEach(id => firstNightLastWordsPlayerIds.add(id))
+  firstDayLastWordsGiven.value = Boolean(snapshot.firstDayLastWordsGiven ?? legacyMessages.some(message => /被公投出局，请发表遗言/.test(message.content || '')))
   dayInterrupted.value = Boolean(snapshot.dayInterrupted)
   silencedPlayerId.value = snapshot.silencedPlayerId || null
   bonusDayPending.value = Number(snapshot.bonusDayPending || 0)
@@ -1104,11 +1119,18 @@ const addRefereeMessage = (content, options = {}) => {
     privateFor: options.privateFor || null, detail: options.detail || ''
   })
   if (visibility === 'public' && options.voice !== false) {
-    void speakText(content, { speaker: 'referee', lang: currentLocale() }).catch(error => {
+    const task = refereeSpeechBarrier
+      .catch(() => false)
+      .then(() => speakText(content, { speaker: 'referee', lang: currentLocale() }))
+    refereeSpeechBarrier = task.catch(error => {
       console.warn('Referee speech failed:', error)
+      return false
     })
+    return refereeSpeechBarrier
   }
+  return Promise.resolve(false)
 }
+const waitForRefereeSpeech = () => refereeSpeechBarrier.catch(() => false)
 const addDialogMessage = (sender, content, type = 'player', options = {}) => addGameMessage({
   sender, content, type, visibility: options.visibility || 'public', privateFor: options.privateFor || null, detail: options.detail || ''
 })
@@ -1164,15 +1186,17 @@ const toggleGamePause = () => {
     isGamePaused.value = true
     speechPausedByGame = Boolean(aiSpeakingContent.value && !speechPaused.value)
     if (speechPausedByGame) pauseSpeechPlayback()
-    addRefereeMessage(currentLocale() === 'zh-CN' ? '游戏已暂停，所有阶段计时与流程推进均已冻结。' : 'Game paused. All timers and phase progression are frozen.')
+    else pauseSpeaking()
+    addRefereeMessage(currentLocale() === 'zh-CN' ? '游戏已暂停，所有阶段计时与流程推进均已冻结。' : 'Game paused. All timers and phase progression are frozen.', { voice: false })
     return
   }
 
   isGamePaused.value = false
   if (speechPausedByGame) resumeSpeechPlayback()
+  else resumeSpeaking()
   speechPausedByGame = false
   releasePauseWaiters()
-  addRefereeMessage(currentLocale() === 'zh-CN' ? '游戏继续。' : 'Game resumed.')
+  addRefereeMessage(currentLocale() === 'zh-CN' ? '游戏继续。' : 'Game resumed.', { voice: false })
 }
 const startSpeechTimer = () => {
   if (activeSpeechTimer) clearInterval(activeSpeechTimer)
@@ -1214,27 +1238,25 @@ const passSpeech = () => {
   closeSpeech('pass')
 }
 
-const startPlayerSpeaking = (pid) => {
+const startPlayerSpeaking = async (pid, announce = true) => {
   if (!gameStarted.value) return
   players.value.forEach(p => { p.isSpeaking = p.id === pid })
   speakingPlayer.value = players.value.find(p => p.id === pid)
-  if (speakingPlayer.value) {
-    addRefereeMessage(currentLocale() === 'zh-CN'
+  if (speakingPlayer.value && announce) {
+    await addRefereeMessage(currentLocale() === 'zh-CN'
       ? `请${speakingPlayer.value.playerNumber}号${speakingPlayer.value.playerName}发言。`
       : `Player ${speakingPlayer.value.playerNumber}, ${speakingPlayer.value.playerName}, please speak.`)
   }
 }
-const endPlayerSpeaking = () => {
+const endPlayerSpeaking = async () => {
   players.value.forEach(p => { p.isSpeaking = false })
-  if (speakingPlayer.value) addRefereeMessage(currentLocale() === 'zh-CN'
+  if (speakingPlayer.value) await addRefereeMessage(currentLocale() === 'zh-CN'
     ? `${speakingPlayer.value.playerNumber}号发言结束。`
     : `Player ${speakingPlayer.value.playerNumber} has finished speaking.`)
   speakingPlayer.value = null
 }
 const setSheriff = (pid) => {
   players.value.forEach(p => { p.isSheriff = p.id === pid; p.isSheriffCandidate = false })
-  const s = players.value.find(p => p.id === pid)
-  if (s) addRefereeMessage($t('gamePlay.sheriffElected', { name: s.playerName }))
 }
 const killPlayer = (pid) => {
   const p = players.value.find(x => x.id === pid)
@@ -1271,6 +1293,7 @@ const checkGameEnd = () => {
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 const phaseDelay = async (ms = 500) => {
+  await waitForRefereeSpeech()
   let remaining = Math.max(120, Math.round(ms * ({ slow: 1, normal: 0.65, fast: 0.35 }[typewriterSpeed.value] || 0.65)))
   while (remaining > 0 && gameStarted.value) {
     await waitWhilePaused()
@@ -1306,7 +1329,8 @@ const initializeGameState = () => {
   sheriffElectionDone.value = false
   sheriffBadgeLost.value = false
   lastExiledPlayerId.value = null
-  lastWordsGiven.value = false
+  firstNightLastWordsPlayerIds.clear()
+  firstDayLastWordsGiven.value = false
   dayInterrupted.value = false
   resumeStage.value = 'night'
   silencedPlayerId.value = null
@@ -1327,13 +1351,14 @@ const initializeGameState = () => {
   Object.assign(evilKnightState, { seerReflected: false, witchReflected: false })
   Object.assign(shapeshifterState, { playerId: null, originalRole: null })
   Object.assign(cursedFoxState, { playerId: null, killedBySeer: false })
-  Object.assign(miracleMerchantState, { used: false, merchantId: null, luckyId: null, skill: null, pendingDeath: false, giftResolved: false })
+  Object.assign(miracleMerchantState, { used: false, merchantId: null, luckyId: null, skill: null, pendingDeath: false, transactionFailed: false, giftResolved: false })
   Object.assign(wolfBeautyState, { previousTargetId: null, targetId: null })
   witchInventory.antidote = 1
   witchInventory.poison = 1
   Object.assign(nightState, createEmptyNightState())
   Object.keys(playerMemories).forEach(key => delete playerMemories[key])
   Object.keys(publicRoleClaims).forEach(key => delete publicRoleClaims[key])
+  Object.keys(publicMiracleClaims).forEach(key => delete publicMiracleClaims[key])
   players.value.forEach(player => {
     player.isAlive = true
     player.isSpeaking = false
@@ -1347,7 +1372,7 @@ const resetNightState = () => {
   Object.assign(nightState, createEmptyNightState(), { previousGuardTargetId: lastGuardTargetId.value })
 }
 
-const publicSituationSummary = (language = currentLocale()) => {
+const promptSituationSummary = (language = currentLocale()) => {
   const alive = alivePlayers.value.map(p => language === 'en-US' ? String(p.playerNumber) : `${p.playerNumber}号`).join(language === 'en-US' ? ', ' : '、') || (language === 'en-US' ? 'none' : '无')
   const dead = players.value.filter(p => !p.isAlive).map(p => language === 'en-US' ? String(p.playerNumber) : `${p.playerNumber}号`).join(language === 'en-US' ? ', ' : '、') || (language === 'en-US' ? 'none' : '无')
   return language === 'zh-CN'
@@ -1463,7 +1488,13 @@ const buildPlayerKnowledge = (player, language) => {
 const buildDecisionPrompts = (player, action, extra, config) => {
   const language = config.language === 'en-US' ? 'en-US' : 'zh-CN'
   const miracleGift = playerMemories[player.id]?.miracleGift
+  const giftName = language === 'en-US'
+    ? ({ check: 'inspection', poison: 'poison', guard: 'protection' }[miracleMerchantState.skill] || miracleMerchantState.skill)
+    : ({ check: '查验', poison: '毒药', guard: '守护' }[miracleMerchantState.skill] || miracleMerchantState.skill)
   const claimedRoles = Object.entries(publicRoleClaims).map(([id, role]) => `${getPlayerNumberById(Number(id))}号声明${role}`).join('；') || '暂无公开身份声明'
+  const publicMiracleFacts = Object.values(publicMiracleClaims).map(claim => language === 'en-US'
+    ? `Player ${claim.merchantNumber} publicly claimed Miracle Merchant${claim.luckyNumber ? ` and named player ${claim.luckyNumber} as recipient` : ''}${claim.skill ? ` of ${claim.skill}` : ''}${claim.claimedBacklash ? ', claiming transaction backlash' : ''}.`
+    : `${claim.merchantNumber}号公开声明奇迹商人${claim.luckyNumber ? `，报${claim.luckyNumber}号为幸运儿` : ''}${claim.skill ? `，技能为${claim.skill}` : ''}${claim.claimedBacklash ? '，并声称交易反噬' : ''}。`).join(' ')
   const publicHistory = getPublicHistory().join('\n') || (language === 'en-US' ? 'No public speech yet.' : '暂无公开发言。')
   const style = language === 'en-US'
     ? `Personality tags: ${config.personality || 'calm and analytical'}. Strategy tags: ${config.strategy || 'evidence-based deduction'}.`
@@ -1473,19 +1504,24 @@ const buildDecisionPrompts = (player, action, extra, config) => {
     : `必须完全沉浸在狼人杀对局中，禁止提及AI、模型、系统提示、Token或“没有视角”等场外信息；禁止贴脸、赌咒和场外证据。黑话只能美化表达，底层判断必须落到具体发言、行动、身份声明或票型。只有公开跳预言家或冒充其他神职的玩家才能被称为“悍跳”，未跳身份者只能称为狼人嫌疑位。严禁使用全知身份信息。当前公开身份声明：${claimedRoles}。只返回一个合法JSON对象。`
   const systemPrompt = `${buildPlayerKnowledge(player, language)}\n本局规则：${boardRules.value.special}\n狼人杀知识库：\n${WEREWOLF_KNOWLEDGE}\n${style}\n${commonRules}`
   const base = language === 'en-US'
-    ? `Current public situation: ${publicSituationSummary(language)}\nMost recent public record:\n${publicHistory}\n`
-    : `当前公开局势：${publicSituationSummary()}\n最近公开记录：\n${publicHistory}\n`
+    ? `Current public situation: ${promptSituationSummary(language)}\nPersistent public facts: ${publicMiracleFacts || 'No public Miracle Merchant claim.'}\nMost recent public record:\n${publicHistory}\n`
+    : `当前公开局势：${promptSituationSummary()}\n持续有效的公开事实：${publicMiracleFacts || '暂无公开奇迹商人声明。'}\n最近公开记录：\n${publicHistory}\n`
   let instruction = ''
-  if (action === 'lastWords') {
+  if (action === 'lastWords' || action === 'nightLastWords') {
+    const isNightDeath = action === 'nightLastWords'
+    const merchantLastWordsRule = hasRole(player, 'miracle') && miracleMerchantState.used
+      ? (language === 'en-US'
+          ? `You must identify yourself as the Miracle Merchant and accurately state that you granted ${giftName || 'a skill'} to player ${getPlayerNumberById(miracleMerchantState.luckyId)}. ${miracleMerchantState.transactionFailed ? 'The moderator privately confirmed that the transaction failed and caused your backlash death, so clearly state that this recipient is a wolf-team player.' : 'Your public cause of death is not confirmed; distinguish a wolf kill from transaction backlash and ask the recipient to report the gift.'}`
+          : `你必须公开说明自己是奇迹商人，并准确交代昨夜把${giftName || '技能'}给了${getPlayerNumberById(miracleMerchantState.luckyId)}号。${miracleMerchantState.transactionFailed ? '主持人已私下确认交易失败并触发反噬，因此要明确告诉场上该幸运儿属于狼人阵营。' : '公开视角无法确认你是被狼刀还是交易反噬，必须区分两种可能，并要求幸运儿对账。'}`)
+      : ''
     instruction = language === 'en-US'
-      ? `Task: You have already been exiled and this is your final statement. First write a concise private post-vote analysis, then give a 100-180 word in-character final statement. Review why you were exiled, identify the most important suspicious player or contradiction for the surviving good team, and leave a concrete warning based on public speeches and votes. You are out of the game: do not say you will keep listening, vote later, update your opinion, speak next round, or take any future action. JSON schema: {"thinking":"private final analysis","speech":"public final statement"}`
-      : `任务：你已经被公投放逐，现在发表最后遗言。先写一段简洁的私密复盘，再写160-300个中文字符的公开遗言。遗言要复盘自己为何被推出局，结合公开发言和票型指出最值得存活好人关注的玩家或矛盾，并留下明确警示。你已经出局，严禁说“继续听发言”“之后再投”“准备投给”“下一轮发言”“再调整判断”等任何自己未来还会参与游戏的内容。JSON格式：{"thinking":"私密最终复盘","speech":"公开遗言"}`
+      ? `Task: You died ${isNightDeath ? 'during the night; the moderator did not publicly reveal the cause' : 'by public exile'} and this is your final statement. First write a concise private analysis, then give a 100-180 word in-character final statement. ${merchantLastWordsRule} Review only events that already happened and leave one concrete warning. You are out of the game: never say you will keep listening, vote later, update your opinion, speak next round, or take any future action. JSON schema: {"thinking":"private final analysis","speech":"public final statement"}`
+      : `任务：你${isNightDeath ? '在昨夜死亡，主持人只公开死讯、没有公开死因' : '已经被公投放逐'}，现在发表最后遗言。先写简洁的私密复盘，再写160-300个中文字符的公开遗言。${merchantLastWordsRule}只复盘已经发生的夜间结果、公开发言和票型，留下一个明确警示。你已经出局，严禁说“继续听发言”“之后再投”“准备投给”“下一轮发言”“再调整判断”等任何未来行动。JSON格式：{"thinking":"私密最终复盘","speech":"公开遗言"}`
   } else if (action === 'speech' || action === 'pkSpeech' || action === 'sheriffSpeech' || action === 'sheriffPkSpeech') {
     const stageName = action === 'pkSpeech' ? '平票PK发言' : action === 'sheriffPkSpeech' ? '警徽PK发言' : action === 'sheriffSpeech' ? '警长竞选发言' : '正常白天发言'
     const specialSchema = (hasRole(player, 'whiteWolf') && action === 'speech') || (isPackWolf(player) && ['sheriffSpeech', 'sheriffPkSpeech'].includes(action))
       ? ',"explode":是否自爆,"target":自爆带走的玩家编号或null'
       : ''
-    const giftName = { check: '查验', poison: '毒药', guard: '守护' }[miracleMerchantState.skill] || miracleMerchantState.skill
     const miracleSpeechRule = miracleGift?.skill === 'check' && miracleGift.result
       ? (language === 'en-US'
           ? `You are the lucky recipient of a one-use inspection. You must publicly say that you received a mysterious gift and accurately report player ${getPlayerNumberById(miracleGift.targetId)} as ${miracleGift.result === '狼人' ? 'a wolf result' : 'a good result'}. You do not know who the Merchant is. ${miracleGift.result === '狼人' ? 'Ask the Merchant to authenticate the result and push this target.' : 'Report the good result while allowing the Merchant to remain hidden.'}`
@@ -1494,7 +1530,11 @@ const buildDecisionPrompts = (player, action, extra, config) => {
           ? (language === 'en-US'
               ? `You are the Miracle Merchant and only know that you gave ${miracleMerchantState.skill} to player ${getPlayerNumberById(miracleMerchantState.luckyId)}. Wait for the recipient to report the correct gift before authenticating it; do not expose yourself before that player speaks.`
               : `你是奇迹商人，只知道自己把${giftName}技能给了${getPlayerNumberById(miracleMerchantState.luckyId)}号。必须先听幸运儿是否报出正确礼物信息：查杀时应公开认领作证，金水时可用“快递由我寄出”等暗号延迟相认；幸运儿尚未发言时不要抢先暴露。`)
-          : '')
+          : (isBoard('miracle_merchant')
+              ? (language === 'en-US'
+                  ? 'If a dead player publicly claimed Miracle Merchant, analyze both wolf-kill and failed-transaction backlash possibilities. Check the claimed recipient, gift type, and the recipient report before treating anyone as mechanically confirmed.'
+                  : '若已有死亡玩家公开跳奇迹商人，必须讨论狼刀与交易失败反噬两种可能，并核对其所报幸运儿、技能类型及幸运儿回报，不能无视这条信息，也不能在未对账前机械认定死因。')
+              : ''))
     instruction = language === 'en-US'
       ? `Task: give a ${stageName} speech. First write private strategic analysis, then a 120-220 word public in-character speech. Analyze actual night results, prior speeches or votes, name concrete suspects and a voting intention. ${miracleSpeechRule} End naturally and decide a short pause before passing. JSON schema: {"thinking":"private strategy","speech":"public speech","claimRole":"seer|merchant|other|none","pass_microphone":true,"pass_delay_seconds":0.8-4${specialSchema}}`
       : `任务：${stageName}。先写简洁的私密局势分析，再写180-350个中文字符的公开发言。必须结合真实夜间结果、此前发言或票型，至少点出一名具体怀疑对象或矛盾并说明投票倾向。${miracleSpeechRule}发言自然收束，并自行决定结束后停顿多久过麦。JSON格式：{"thinking":"私密策略摘要","speech":"公开发言","claimRole":"seer或merchant或other或none","pass_microphone":true,"pass_delay_seconds":0.8到4${specialSchema}}`
@@ -1516,12 +1556,12 @@ const buildDecisionPrompts = (player, action, extra, config) => {
       : `请选择一名存活玩家查验。可选：${extra.candidates}。JSON：{"thinking":"私密决策摘要","target":玩家编号}`
   } else if (action === 'vote') {
     instruction = language === 'en-US'
-      ? `Privately vote to exile one candidate. You must choose and cannot abstain. Candidates: ${extra.candidates}. JSON: {"thinking":"private vote reasoning","target":number}`
-      : `请私下投票放逐一名候选人，必须选择，不得弃票。候选：${extra.candidates}。JSON：{"thinking":"私密投票理由","target":玩家编号}`
+      ? `${extra.mustChoose ? 'This is a tie-break PK vote: you must choose one listed candidate and cannot abstain.' : 'This is a regular exile vote: you may abstain, but must explain why because abstention leaves a suspicious voting record.'} Candidates: ${extra.candidates}. JSON: {"thinking":"private vote reasoning","target":number|null,"abstain":boolean}`
+      : `${extra.mustChoose ? '本轮是平票后的PK重投，必须从PK台候选人中选择，不得弃票。' : '本轮是常规放逐投票，可以弃票（压手），但必须说明原因，因为弃票会留下需要解释的票型。'}候选：${extra.candidates}。JSON：{"thinking":"私密投票理由","target":玩家编号或null,"abstain":true或false}`
   } else if (action === 'hunter') {
     instruction = language === 'en-US'
-      ? `You died by ${extra.cause} and may fire your Hunter ability once. Choose exactly one living target based only on public evidence. Candidates: ${extra.candidates}. JSON: {"thinking":"private shooting rationale","target":number}`
-      : `你因${extra.cause}出局，可以发动一次猎人技能。请只根据公开信息，从存活玩家中选择一名开枪带走。可选：${extra.candidates}。JSON：{"thinking":"私密开枪理由","target":玩家编号}`
+      ? `You died by ${extra.cause} and may fire once or deliberately hold your shot if evidence is insufficient. Candidates: ${extra.candidates}. JSON: {"thinking":"private shooting rationale","fire":boolean,"target":number|null}`
+      : `你因${extra.cause}出局，可以选择开枪，也可以在证据不足时闷枪。请只根据公开信息判断。可选：${extra.candidates}。JSON：{"thinking":"私密开枪理由","fire":true或false,"target":玩家编号或null}`
   } else if (action === 'miracle') {
     instruction = language === 'en-US'
       ? `Use your once-per-game Merchant ability. Choose another player and grant check, poison, or guard. Candidates: ${extra.candidates}. JSON: {"thinking":"private plan","target":number,"skill":"check|poison|guard"}`
@@ -1543,8 +1583,8 @@ const buildDecisionPrompts = (player, action, extra, config) => {
       : `所有警上发言结束，现在根据自己的策略自由决定是否退水。真预言家通常不退水、诈身份玩家常选择退水，但这只是常见打法而非系统限制；即使没有公开跳神职，也可以选择继续竞选。JSON：{"thinking":"私密退水判断","withdraw":true或false}`
   } else if (action === 'sheriffVote') {
     instruction = language === 'en-US'
-      ? `You are below the sheriff line and must vote for one remaining candidate. Candidates cannot vote. Candidates: ${extra.candidates}. JSON: {"thinking":"private sheriff read","target":number}`
-      : `你属于警下玩家（包括刚退水者），必须从未退水候选人中选出警长；仍在警上的候选人没有投票权。候选：${extra.candidates}。JSON：{"thinking":"私密警长判断","target":玩家编号}`
+      ? `You are below the sheriff line. ${extra.mustChoose ? 'This is a tie-break PK vote, so you must choose one PK candidate.' : 'In the first sheriff vote you may abstain, but should explain the voting consequence.'} Candidates cannot vote. Candidates: ${extra.candidates}. JSON: {"thinking":"private sheriff read","target":number|null,"abstain":boolean}`
+      : `你属于警下玩家（包括刚退水者），仍在警上的候选人没有投票权。${extra.mustChoose ? '本轮是警徽PK重投，必须从PK台候选人中选择，不得弃票。' : '首轮警徽投票可以弃票（压手），但需要解释票型后果。'}候选：${extra.candidates}。JSON：{"thinking":"私密警长判断","target":玩家编号或null,"abstain":true或false}`
   } else if (action === 'sheriffTransfer') {
     instruction = `你是死亡警长，必须把警徽传给一名存活玩家，或撕掉警徽（target为null）。可选：${extra.candidates}。JSON：{"thinking":"私密警徽流判断","target":玩家编号或null}`
   } else if (action === 'knight') {
@@ -1575,6 +1615,7 @@ const buildDecisionPrompts = (player, action, extra, config) => {
 }
 
 const requestPlayerDecision = async (player, action, extra = {}) => {
+  await waitForRefereeSpeech()
   await waitWhilePaused()
   const config = await getAiConfig(player)
   await waitWhilePaused()
@@ -1583,7 +1624,7 @@ const requestPlayerDecision = async (player, action, extra = {}) => {
   try {
     const result = await callStructuredAi(config, prompts.systemPrompt, prompts.userPrompt)
     await waitWhilePaused()
-    return { ...(result || {}), language: prompts.language }
+    return { ...(result || {}), language: prompts.language, usedLocalFallback: !result }
   } finally {
     aiThinkingPlayers.value = aiThinkingPlayers.value.filter(id => id !== player.id)
   }
@@ -1683,10 +1724,11 @@ const runMiracleMerchantAction = async version => {
   const lucky = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
   const skill = ['check', 'poison', 'guard'].includes(decision.skill) ? decision.skill : (currentRound.value === 1 ? 'check' : randomItem(['check', 'poison', 'guard']))
   if (!lucky) return
-  Object.assign(miracleMerchantState, { used: true, merchantId: merchant.id, luckyId: lucky.id, skill, pendingDeath: isWolfRole(lucky) })
+  const transactionFailed = isWolfRole(lucky)
+  Object.assign(miracleMerchantState, { used: true, merchantId: merchant.id, luckyId: lucky.id, skill, pendingDeath: transactionFailed, transactionFailed })
   playerMemories[merchant.id].privateKnowledge.push(`你已把一次性${{ check: '查验', poison: '毒药', guard: '守护' }[skill]}交给${lucky.playerNumber}号；你不知道其阵营。`)
   addGameMessage({ sender: `${merchant.playerNumber}号奇迹商人`, content: `选择${lucky.playerNumber}号为幸运儿，授予${{ check: '查验', poison: '毒药', guard: '守护' }[skill]}`, type: 'night-action', visibility: 'private', privateFor: merchant.id })
-  if (isWolfRole(lucky)) {
+  if (transactionFailed) {
     addRefereeMessage('幸运儿属于狼人阵营，技能授予失败，奇迹商人将在天亮时出局。', { visibility: 'god' })
     return
   }
@@ -2089,10 +2131,16 @@ const resolveNight = () => {
   if (dreamerState.currentTargetId && dreamerState.currentTargetId === dreamerState.previousTargetId) deaths.add(dreamerState.currentTargetId)
   const dreamer = players.value.find(player => hasAbilityRole(player, 'dreamer'))
   if (dreamer && deaths.has(dreamer.id) && dreamerState.currentTargetId) deaths.add(dreamerState.currentTargetId)
-  if (miracleMerchantState.pendingDeath && miracleMerchantState.merchantId) deaths.add(miracleMerchantState.merchantId)
+  const merchant = players.value.find(player => player.id === miracleMerchantState.merchantId)
+  if (miracleMerchantState.pendingDeath && merchant?.isAlive) {
+    deaths.add(merchant.id)
+    const privateNotice = `主持人已确认：你把${{ check: '查验', poison: '毒药', guard: '守护' }[miracleMerchantState.skill]}交给${getPlayerNumberById(miracleMerchantState.luckyId)}号时交易失败，你因反噬出局；该目标属于狼人阵营。遗言必须准确公开目标和技能。`
+    const merchantMemory = playerMemories[merchant.id]
+    if (merchantMemory && !merchantMemory.privateKnowledge.includes(privateNotice)) merchantMemory.privateKnowledge.push(privateNotice)
+  }
   nightState.deaths = [...deaths]
   const poisonDetail = poisoned.length ? `；毒药带走${poisoned.map(player => `${player.playerNumber}号`).join('、')}` : ''
-  const merchantDetail = miracleMerchantState.pendingDeath ? '；幸运儿为狼人，奇迹商人遭受反噬出局' : ''
+  const merchantDetail = miracleMerchantState.pendingDeath && merchant?.isAlive ? '；幸运儿为狼人，奇迹商人遭受反噬出局' : ''
   const reflectionDetail = nightState.evilKnightSeerReflected || nightState.evilKnightPoisonReflected ? '；恶灵骑士触发一次性反伤' : ''
   const foxDetail = nightState.cursedFoxSeerTargetId ? '；咒狐被查验后出局' : ''
   nightState.explanation = `${mainReason}${poisonDetail}${merchantDetail}${reflectionDetail}${foxDetail}`
@@ -2158,8 +2206,11 @@ const resolveHunterSkill = async (hunter, version, cause) => {
   })
   if (!isLoopActive(version)) return
   recordPrivateThinking(hunter, decision.thinking, '猎人开枪')
-  const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
-  if (!target) return
+  const target = resolvePlayerTarget(decision.target, candidates)
+  if (decision.fire === false || !target) {
+    addRefereeMessage(`${hunter.playerNumber}号猎人选择不开枪。`)
+    return
+  }
 
   killPlayer(target.id)
   addRefereeMessage(`${hunter.playerNumber}号猎人发动技能，开枪带走${target.playerNumber}号${target.playerName}。`)
@@ -2264,12 +2315,13 @@ const settleNightWithoutAnnouncement = async version => {
     const cause = [nightState.witchPoisonTargetId, nightState.miraclePoisonTargetId].includes(playerId) ? 'poison' : 'night'
     await resolveDeathEffects(player, version, cause)
   }
+  miracleMerchantState.pendingDeath = false
   addRefereeMessage('因警长竞选自爆，本日不公布首夜死讯；首夜结算已由主持人在后台完成。', { visibility: 'god', detail: nightState.explanation })
 }
 
 const announceDay = async (version) => {
   currentPhase.value = 'day'
-  addRefereeMessage(currentLocale() === 'zh-CN' ? `天亮了，现在是第${currentDay.value}天。` : `Dawn breaks. Day ${currentDay.value} begins.`)
+  await addRefereeMessage(currentLocale() === 'zh-CN' ? `天亮了，现在是第${currentDay.value}天。` : `Dawn breaks. Day ${currentDay.value} begins.`)
   nightState.deaths.forEach(killPlayer)
   if (!nightState.deaths.length) {
     lastPublicNightReport.value = currentLocale() === 'zh-CN' ? '昨夜是平安夜，没有人死亡。' : 'It was a peaceful night. No one died.'
@@ -2279,7 +2331,7 @@ const announceDay = async (version) => {
       ? `昨夜${numbers}玩家死亡，死亡不分先后。`
       : `Last night, player(s) ${numbers} died. Deaths are unordered.`
   }
-  addRefereeMessage(lastPublicNightReport.value, { detail: nightState.explanation })
+  await addRefereeMessage(lastPublicNightReport.value, { detail: nightState.explanation })
   if (isBoard('bear_hunter_idiot') || isBoard('shapeshifter_wolfking')) {
     const bear = alivePlayers.value.find(player => hasAbilityRole(player, 'bear'))
     if (bear) {
@@ -2287,43 +2339,69 @@ const announceDay = async (version) => {
       const index = seats.findIndex(player => player.id === bear.id)
       const neighbours = index < 0 ? [] : [seats[(index - 1 + seats.length) % seats.length], seats[(index + 1) % seats.length]].filter(player => player?.isAlive)
       const roaring = neighbours.some(isWolfRole)
-      addRefereeMessage(roaring ? '熊咆哮了：熊相邻的存活玩家中存在狼人。' : '熊没有咆哮：熊相邻的存活玩家中没有狼人。')
+      await addRefereeMessage(roaring ? '熊咆哮了：熊相邻的存活玩家中存在狼人。' : '熊没有咆哮：熊相邻的存活玩家中没有狼人。')
     }
   }
-  if (nightState.deaths.length && currentRound.value === 1 && Number(boardRules.value.players) === 12 && !lastWordsGiven.value) {
-    const firstNightDead = players.value.find(player => player.id === nightState.deaths[0])
-    await giveLastWords(firstNightDead, version, 'night')
+  if (nightState.deaths.length && currentRound.value === 1 && Number(boardRules.value.players) === 12) {
+    for (const playerId of shuffleArray([...nightState.deaths])) {
+      const firstNightDead = players.value.find(player => player.id === playerId)
+      await giveLastWords(firstNightDead, version, 'night')
+    }
   }
   for (const playerId of nightState.deaths) {
     const player = players.value.find(candidate => candidate.id === playerId)
     const cause = [nightState.witchPoisonTargetId, nightState.miraclePoisonTargetId].includes(playerId) ? 'poison' : 'night'
     await resolveDeathEffects(player, version, cause)
   }
-  addRefereeMessage(currentLocale() === 'zh-CN' ? `当前局势简报：${publicSituationSummary()}` : `Situation briefing: ${publicSituationSummary()}`)
+  miracleMerchantState.pendingDeath = false
+  await addRefereeMessage(currentLocale() === 'zh-CN' ? `当前存活${alivePlayers.value.length}人。` : `${alivePlayers.value.length} players remain alive.`)
   await phaseDelay(800)
 }
 
 const contextualFallbackSpeech = (player, language, action = 'speech') => {
   const others = alivePlayers.value.filter(p => p.id !== player.id)
-  const recentSpeakers = dialogMessages.value.filter(m => m.type === 'player' && (m.visibility || 'public') === 'public').slice(-3)
-  const suspect = recentSpeakers.length
-    ? players.value.find(p => p.playerName === recentSpeakers[0].sender && p.isAlive && p.id !== player.id) || randomItem(others)
+  const recentSpeeches = dialogMessages.value
+    .filter(message => message.type === 'player' && (message.visibility || 'public') === 'public' && message.sender !== player.playerName)
+    .slice(-3)
+  const latestSpeech = recentSpeeches.at(-1)
+  const suspect = latestSpeech
+    ? players.value.find(p => p.playerName === latestSpeech.sender && p.isAlive && p.id !== player.id) || randomItem(others)
     : randomItem(others)
   const second = others.find(p => p.id !== suspect?.id) || suspect
-  const checkedWolf = (playerMemories[player.id]?.checks || []).find(check => check.result === '狼人')
+  const memory = playerMemories[player.id] || { checks: [], votes: [] }
+  const latestCheck = (memory.checks || []).slice(-1)[0]
+  const checkedWolf = (memory.checks || []).slice().reverse().find(check => check.result === '狼人')
   const latestVote = voteHistory.value[voteHistory.value.length - 1]
   const votesAgainstPlayer = latestVote?.ballots?.filter(ballot => ballot.targetId === player.id).map(ballot => getPlayerNumberById(ballot.voterId)) || []
-  if (action === 'lastWords') {
-    if (language === 'en-US') {
-      const voteReview = votesAgainstPlayer.length
-        ? `Players ${votesAgainstPlayer.join(', ')} formed the votes that sent me out.`
-        : 'The final vote pushed me out without a stable public case.'
-      return `I have been exiled, so this is my final assessment rather than another campaign speech. ${voteReview} The surviving good players should review whether those votes followed concrete contradictions or merely gathered after the room found an easy target. My strongest warning is about player ${suspect?.playerNumber || '?'}, whose position has not been supported by a consistent chain of reasons. Compare that slot directly with player ${second?.playerNumber || '?'} and check who changed their read only after the likely result became clear. ${checkedWolf ? `The most important information I leave behind is that player ${getPlayerNumberById(checkedWolf.targetId)} should be treated as the priority wolf suspect.` : 'Do not clear anyone for sounding confident; use the public vote record and contradictions.'} That is the conclusion I leave with the table.`
+  const ownVote = (memory.votes || []).slice(-1)[0]
+  const excerpt = String(latestSpeech?.content || '').replace(/\s+/g, ' ').slice(0, 42)
+  const merchantClaim = Object.values(publicMiracleClaims).find(claim => !players.value.find(player => player.id === claim.merchantId)?.isAlive)
+    || Object.values(publicMiracleClaims)[0]
+  const merchantClaimant = players.value.find(candidate => candidate.id === merchantClaim?.merchantId)
+  const isLastWords = action === 'lastWords' || action === 'nightLastWords'
+  const isNightLastWords = action === 'nightLastWords'
+  const giftLabel = { check: '查验', poison: '毒药', guard: '守护' }[miracleMerchantState.skill] || '技能'
+  if (isLastWords) {
+    if (hasRole(player, 'miracle') && miracleMerchantState.used) {
+      const targetNumber = getPlayerNumberById(miracleMerchantState.luckyId)
+      if (language === 'en-US') {
+        return `I am the Miracle Merchant. Last night I granted a one-use ${miracleMerchantState.skill || 'ability'} to player ${targetNumber}. ${miracleMerchantState.transactionFailed ? `The transaction failed and the backlash killed me, so player ${targetNumber} belongs to the wolf team.` : `The public table cannot mechanically distinguish a wolf kill from transaction backlash; player ${targetNumber} must report whether the gift arrived and how it was used.`} Check that account before building the good-team logic. This is the complete ability information I leave behind.`
+      }
+      return `我是奇迹商人。昨夜我把一次性${giftLabel}交给了${targetNumber}号。${miracleMerchantState.transactionFailed ? `这次交易失败并触发反噬，我因此出局，所以${targetNumber}号属于狼人阵营，今天优先核对和处理这个位置。` : `公开视角不能机械断定我是被狼刀还是交易反噬，${targetNumber}号必须准确说明是否收到${giftLabel}以及如何使用，再据此完成对账。`}这就是我能留给场上的完整技能信息。`
     }
-    const voteReview = votesAgainstPlayer.length
-      ? `刚才${votesAgainstPlayer.join('号、')}号的票共同把我推出了局。`
-      : '刚才的票型并没有形成一条稳定、公开的放逐理由。'
-    return `我已经被放逐出局，这段遗言只做最后复盘。${voteReview}存活的好人要重新核对这些票究竟来自具体矛盾，还是在场上出现容易推动的目标后集中跟票。我最后最想提醒的是${suspect?.playerNumber || '?'}号：这个位置给出的怀疑链条并不完整，需要和${second?.playerNumber || '?'}号的站边、改票时机放在一起检查，看谁是在结果逐渐明确后才临时调整口径。${checkedWolf ? `我留下的最重要信息是${getPlayerNumberById(checkedWolf.targetId)}号应当作为狼人重点处理。` : '不要因为语气强势就轻易认好，公开票型和前后矛盾才是能留下来的证据。'}这是我留给场上的最终判断。`
+    if (language === 'en-US') {
+      const exitReview = isNightLastWords
+        ? 'I died during the night, and the public announcement does not prove whether the cause was the wolf kill, poison, or another role interaction.'
+        : (votesAgainstPlayer.length ? `Players ${votesAgainstPlayer.join(', ')} cast the votes that exiled me.` : 'I was exiled without a stable public case.')
+      return `${exitReview} ${latestCheck ? `My confirmed inspection on player ${getPlayerNumberById(latestCheck.targetId)} was ${latestCheck.result}.` : ''} My final warning is player ${suspect?.playerNumber || '?'}. Compare that slot's statement${excerpt ? `, “${excerpt}”` : ''} with player ${second?.playerNumber || '?'} and the public voting record. I am out and will take no further action; this is the evidence I leave to the living players.`
+    }
+    const exitReview = isNightLastWords
+      ? '我在昨夜倒牌，公开死讯本身不能证明我是被狼刀、毒药还是其他技能结算带走。'
+      : (votesAgainstPlayer.length ? `刚才${votesAgainstPlayer.join('号、')}号的票共同把我推出了局。` : '我已经被公投出局，但公开票型没有形成稳定理由。')
+    const roleInfo = latestCheck
+      ? `我能留下的硬信息是：${getPlayerNumberById(latestCheck.targetId)}号查验为${latestCheck.result === '狼人' ? '查杀' : '金水'}。`
+      : ''
+    return `${exitReview}${roleInfo}我最后提醒场上核对${suspect?.playerNumber || '?'}号${excerpt ? `刚才“${excerpt}”这段发言` : '的公开立场'}，再和${second?.playerNumber || '?'}号的站边及票型放在一起看。${checkedWolf ? `${getPlayerNumberById(checkedWolf.targetId)}号是我留下的首要狼人信息。` : '不要凭语气认好，也不要忽略临时改口和跟票关系。'}我已经出局，不再参与后续行动，这些是我留给存活玩家的判断。`
   }
   if (['sheriffSpeech', 'sheriffPkSpeech'].includes(action)) {
     const latestCheck = (playerMemories[player.id]?.checks || []).slice(-1)[0]
@@ -2333,18 +2411,23 @@ const contextualFallbackSpeech = (player, language, action = 'speech') => {
     return `我选择上警，是为了把自己的判断放到警上接受全场检验。我目前关注${suspect?.playerNumber || '?'}号和${second?.playerNumber || '?'}号，重点会看他们是否给出具体身份声明、验人信息、上警收益和完整警徽流。是否退水要结合对跳关系、警下票型和后续发言判断，我会在退水环节明确表态。`
   }
   if (language === 'en-US') {
-    const englishNightReport = nightState.deaths.length
-      ? `Last night, players ${nightState.deaths.map(getPlayerNumberById).join(', ')} died.`
-      : 'Last night was peaceful and no one died.'
-    return `I will base this on the board rather than make a vague pass. ${englishNightReport} The current survivor list and the order of prior speeches matter because later speakers can adapt their stories. My first focus is player ${suspect?.playerNumber || '?'}. Their position has not yet been tied to a clear reason, and I want them to explain whom they suspect, what specific statement created that suspicion, and where their vote is going. I am also comparing that answer with player ${second?.playerNumber || '?'} so that we can see whether either one is simply following the room. ${checkedWolf ? `I have strong game information against player ${getPlayerNumberById(checkedWolf.targetId)}, so that slot is my priority today.` : 'For now I will not treat confidence as evidence; contradictions, voting movement, and attempts to avoid naming a target are more useful.'} My current voting preference is player ${checkedWolf ? getPlayerNumberById(checkedWolf.targetId) : suspect?.playerNumber || '?'}, but I will update it if the remaining speeches provide a stronger inconsistency.`
+    const speechEvidence = latestSpeech ? `Player ${suspect?.playerNumber} said “${excerpt}”; I want the reason and intended vote behind that statement.` : 'I am early in the order, so there is no prior speech to invent a contradiction from.'
+    const voteEvidence = ownVote?.targetId ? `My previous public vote was on player ${getPlayerNumberById(ownVote.targetId)}.` : (ownVote?.abstained ? 'I abstained in the previous vote and must account for that choice.' : 'There is no previous public vote from me to use yet.')
+    return `${lastPublicNightReport.value || 'The day discussion has begun.'} ${speechEvidence} ${voteEvidence} ${latestCheck ? `My inspection on player ${getPlayerNumberById(latestCheck.targetId)} was ${latestCheck.result}, which is the strongest information I have.` : `My current focus is player ${suspect?.playerNumber || '?'}, compared directly with player ${second?.playerNumber || '?'}.`} I will base the vote on role claims, contradictions, and the public ballot rather than repeated generic wording.`
   }
-  const openings = [
-    `${lastPublicNightReport.value || '目前刚进入白天讨论。'}我先梳理目前能够公开核对的信息。`,
-    `这一轮我会把夜间结果和前面的发言逐项对照。${lastPublicNightReport.value || ''}`,
-    `我目前没有理由给任何人凭语气认好，先从已经出现的行为开始盘。${lastPublicNightReport.value || ''}`
-  ]
-  const opening = openings[Math.abs(Number(player.playerNumber) || 0) % openings.length]
-  return `${opening}越靠后的玩家越容易顺着前面的结论调整说法，因此我目前第一关注${suspect?.playerNumber || '?'}号：这个位置需要明确说明怀疑谁、依据是哪一句发言或哪一个行为，以及最终准备投给谁，不能只说“局势复杂”。同时我会对照${second?.playerNumber || '?'}号的站边和票型，看两者是否存在互相抬身份或机械跟票。${checkedWolf ? `我掌握到${getPlayerNumberById(checkedWolf.targetId)}号存在明确的狼人信息，因此今天优先处理这个位置。` : '在没有硬信息前，我不会把语气强势当成好人证据，更重视前后矛盾、回避点人和临时改变票型。'}现阶段我的投票倾向是${checkedWolf ? getPlayerNumberById(checkedWolf.targetId) : suspect?.playerNumber || '?'}号，后置位如果出现更硬的矛盾，我会按证据调整判断。`
+  const speechEvidence = latestSpeech
+    ? `前置位${suspect?.playerNumber}号刚才说“${excerpt}”，我要求他把这句话对应到具体怀疑对象和投票理由，不能只留结论。`
+    : '我在本轮发言顺序靠前，目前没有前置位发言可以盘，所以不会凭空编造矛盾。'
+  const voteEvidence = ownVote?.targetId
+    ? `上一轮我投给了${getPlayerNumberById(ownVote.targetId)}号，这一票要继续结合今天的新发言复核。`
+    : '目前没有可复盘的个人历史票型，我先明确本轮观察重点。'
+  const merchantEvidence = merchantClaimant
+    ? `${merchantClaimant.playerNumber}号已公开声明奇迹商人${merchantClaimant.isAlive ? '' : '并倒牌'}${merchantClaim?.luckyNumber ? `，报${merchantClaim.luckyNumber}号为幸运儿` : ''}${merchantClaim?.skill ? `、赠予${merchantClaim.skill}` : ''}。必须先完成幸运儿对账，再区分狼刀与交易失败反噬，不能把这条线跳过去。`
+    : ''
+  const hardInfo = latestCheck
+    ? `我掌握的查验结果是${getPlayerNumberById(latestCheck.targetId)}号为${latestCheck.result === '狼人' ? '查杀' : '金水'}，这是本轮优先级最高的信息。`
+    : `我暂时重点比较${suspect?.playerNumber || '?'}号和${second?.playerNumber || '?'}号，观察谁在回避角色声明、跟随结论或临时改变票型。`
+  return `${lastPublicNightReport.value || '现在进入白天讨论。'}${speechEvidence}${voteEvidence}${merchantEvidence}${hardInfo}在出现更硬的信息前，我不会凭语气认好；我的表态会跟着公开身份、具体矛盾和真实票型走。`
 }
 
 const normalizeGameTerms = speech => String(speech || '').replace(/(\d+)号([^。！？\n]{0,18})(悍跳狼|悍跳)/g, (match, number, bridge, term) => {
@@ -2368,22 +2451,76 @@ const enforceMiracleGiftSpeech = (speech, player, language) => {
   return `${report}${speech}`
 }
 
+const enforceMiracleMerchantLastWords = (speech, player, language, action) => {
+  if (!['lastWords', 'nightLastWords'].includes(action) || !hasRole(player, 'miracle') || !miracleMerchantState.used) return speech
+  const number = getPlayerNumberById(miracleMerchantState.luckyId)
+  const gift = { check: '查验', poison: '毒药', guard: '守护' }[miracleMerchantState.skill] || '技能'
+  const englishGift = { check: 'inspection', poison: 'poison', guard: 'protection' }[miracleMerchantState.skill] || 'ability'
+  const hasTargetAndGift = language === 'en-US'
+    ? new RegExp(`player\\s+${number}[^.!?\\n]{0,48}${englishGift}|${englishGift}[^.!?\\n]{0,48}player\\s+${number}`, 'i').test(speech)
+    : new RegExp(`${number}号[^。！？\\n]{0,36}${gift}|${gift}[^。！？\\n]{0,36}${number}号`).test(speech)
+  const hasMerchantClaim = language === 'en-US' ? /miracle merchant|merchant/i.test(speech) : /奇迹商人|老板/.test(speech)
+  if (hasTargetAndGift && hasMerchantClaim) return speech
+  if (language === 'en-US') {
+    return `I am the Miracle Merchant. I granted ${miracleMerchantState.skill || 'a one-use ability'} to player ${number}. ${miracleMerchantState.transactionFailed ? `The failed transaction caused my backlash death, so player ${number} is on the wolf team.` : `My public cause of death is uncertain, so player ${number} must report the gift for verification.`} ${speech}`
+  }
+  const cause = miracleMerchantState.transactionFailed
+    ? `交易失败触发反噬，说明${number}号属于狼人阵营。`
+    : `公开视角还不能断定我是被狼刀还是交易反噬，${number}号必须出来对账。`
+  return `我是奇迹商人，昨夜把一次性${gift}交给了${number}号。${cause}${speech}`
+}
+
+const truncateAfterPass = (speech, language) => {
+  const source = String(speech || '')
+  const pattern = language === 'en-US'
+    ? /(?:^|[,.!?]\s*)(?:I\s+)?(?:pass\s+the\s+microphone|pass)(?=[.!?]|$)[.!?]?/i
+    : /(?:^|[，,。！？]\s*)(?:我(?:就)?先?)?(?:过麦|过了)(?=[。！!]|$)[。！!]?/
+  const match = pattern.exec(source)
+  return match ? source.slice(0, match.index + match[0].length) : source
+}
+
+const removeDuplicateSentences = speech => {
+  const seen = new Set()
+  return String(speech || '').split(/(?<=[。！？.!?])/).filter(sentence => {
+    const key = sentence.replace(/\s+/g, '').trim()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).join('').trim()
+}
+
 const registerPublicRoleClaim = (player, speech) => {
   const content = String(speech || '')
   if (/(我是|我这里是|我跳)(真)?预言家|I (?:am|claim) (?:the )?seer/i.test(content)) publicRoleClaims[player.id] = '预言家'
-  else if (/(我是|我这里是|我跳)(真)?奇迹商人|我是老板|I (?:am|claim) (?:the )?(?:merchant|miracle merchant)/i.test(content)) publicRoleClaims[player.id] = '奇迹商人'
+  else if (/(我是|我这里是|我跳)(真)?奇迹商人|我是老板|I (?:am|claim) (?:the )?(?:merchant|miracle merchant)/i.test(content)) {
+    publicRoleClaims[player.id] = '奇迹商人'
+    const targetMatch = content.match(/(?:交给了?|给了?|幸运儿(?:是|为)?)(\d+)号/)
+      || content.match(/(?:recipient|gave|granted)[^.!?\d]{0,24}(?:player\s*)?(\d+)/i)
+    const skillMatch = content.match(/查验|毒药|守护|inspection|poison|protection/i)
+    const normalizedSkill = { inspection: '查验', poison: '毒药', protection: '守护' }[String(skillMatch?.[0] || '').toLowerCase()] || skillMatch?.[0] || ''
+    const existing = publicMiracleClaims[player.id] || {}
+    publicMiracleClaims[player.id] = {
+      merchantId: player.id,
+      merchantNumber: player.playerNumber,
+      luckyNumber: Number(targetMatch?.[1]) || existing.luckyNumber || null,
+      skill: normalizedSkill || existing.skill || '',
+      claimedBacklash: existing.claimedBacklash || /交易失败|反噬|transaction (?:failed|backlash)|backlash/i.test(content)
+    }
+  }
 }
 
 const sanitizeSpeech = (speech, player, language, action = 'speech') => {
   let cleaned = normalizeGameTerms(String(speech || '').replace(/```[\s\S]*?```/g, '').trim())
-  const hasMeta = /(作为AI|我是AI|系统提示|语言模型|token|as an ai|system prompt|language model)/i.test(cleaned)
-  const invalidLastWords = action === 'lastWords' && /(继续听|听完后|等后置位|后面发言|之后再投|准备投给|投票倾向|下一轮|明天我|再调整判断|我(?:还|会|将).*?(?:听|投|发言|观察|调整)|i will (?:keep listening|listen|vote|update)|i(?:'ll| am going to).*?(?:listen|vote|speak|update)|my (?:current )?voting preference|next round|later speeches)/i.test(cleaned)
-  const minimum = action === 'lastWords'
-    ? (language === 'en-US' ? 420 : 150)
-    : (language === 'en-US' ? 580 : 180)
-  if (!cleaned || hasMeta || invalidLastWords) cleaned = contextualFallbackSpeech(player, language, action)
-  else if (cleaned.length < minimum) cleaned = `${cleaned}\n${contextualFallbackSpeech(player, language, action)}`
-  return enforceMiracleGiftSpeech(cleaned, player, language)
+  cleaned = removeDuplicateSentences(truncateAfterPass(cleaned, language))
+  const hasMeta = /(作为AI|我是AI|系统提示|语言模型|token|as an ai|system prompt|language model|JSON格式|JSON schema|私密策略摘要|必须结合真实夜间结果|候选：.*JSON)/i.test(cleaned)
+  const isLastWords = ['lastWords', 'nightLastWords'].includes(action)
+  const invalidLastWords = isLastWords && /(继续听|听完后|等后置位|后面发言|之后再投|准备投给|投票倾向|下一轮|明天我|再调整判断|我(?:还|会|将).*?(?:听|投|发言|观察|调整)|i will (?:keep listening|listen|vote|update)|i(?:'ll| am going to).*?(?:listen|vote|speak|update)|my (?:current )?voting preference|next round|later speeches)/i.test(cleaned)
+  const minimum = isLastWords
+    ? (language === 'en-US' ? 160 : 70)
+    : (language === 'en-US' ? 220 : 90)
+  if (!cleaned || cleaned.length < minimum || hasMeta || invalidLastWords) cleaned = contextualFallbackSpeech(player, language, action)
+  cleaned = enforceMiracleGiftSpeech(cleaned, player, language)
+  return enforceMiracleMerchantLastWords(cleaned, player, language, action)
 }
 
 const presentSpeech = (player, speech, thinking, language, passDelaySeconds = 1.4) => new Promise(resolve => {
@@ -2479,11 +2616,29 @@ const createRandomSpeechOrder = () => {
   return { ids, direction: clockwise ? 'clockwise' : 'counterclockwise', start: ordered[normalizedStartIndex] }
 }
 
-const collectSheriffVote = async (version, candidates, voters, label) => {
+const formatPublicVoteSummary = (ballots, voters) => {
+  const groups = new Map()
+  ballots.forEach(ballot => {
+    if (!groups.has(ballot.targetId)) groups.set(ballot.targetId, [])
+    groups.get(ballot.targetId).push(ballot.voterId)
+  })
+  const grouped = [...groups.entries()]
+    .sort((a, b) => Number(getPlayerNumberById(a[0])) - Number(getPlayerNumberById(b[0])))
+    .map(([targetId, voterIds]) => `${getPlayerNumberById(targetId)}号：${voterIds.map(id => {
+      const voter = players.value.find(player => player.id === id)
+      return `${getPlayerNumberById(id)}号${voter?.isSheriff ? '（警长1.5票）' : ''}`
+    }).join('、')}`)
+  const votedIds = new Set(ballots.map(ballot => ballot.voterId))
+  const abstainers = voters.filter(voter => !votedIds.has(voter.id)).map(voter => `${voter.playerNumber}号`)
+  if (abstainers.length) grouped.push(`弃票：${abstainers.join('、')}`)
+  return grouped.join('；') || '无人投出有效票'
+}
+
+const collectSheriffVote = async (version, candidates, voters, label, mustChoose = false) => {
   const ballots = []
   const decisions = await runDecisionWindow(version, voters, 'sheriffVote', voter => {
     const options = candidates.filter(candidate => candidate.id !== voter.id)
-    return { candidates: options.map(player => `${player.playerNumber}号`).join('、') }
+    return { candidates: options.map(player => `${player.playerNumber}号`).join('、'), mustChoose }
   }, label)
   for (const voter of voters) {
     if (!isLoopActive(version)) break
@@ -2491,8 +2646,12 @@ const collectSheriffVote = async (version, candidates, voters, label) => {
     if (!options.length) continue
     const decision = decisions.get(voter.id) || {}
     recordPrivateThinking(voter, decision.thinking, label)
-    const target = resolvePlayerTarget(decision.target, options) || randomItem(options)
-    if (!target) continue
+    const selectedTarget = resolvePlayerTarget(decision.target, options)
+    const target = selectedTarget || ((mustChoose || decision.usedLocalFallback) ? randomItem(options) : null)
+    if (!target || (!mustChoose && decision.abstain === true)) {
+      addGameMessage({ sender: `${voter.playerNumber}号 ${voter.playerName}`, content: '警徽投票弃票（压手）', type: 'vote-action', visibility: 'private', privateFor: voter.id })
+      continue
+    }
     ballots.push({ voterId: voter.id, targetId: target.id })
     addGameMessage({ sender: `${voter.playerNumber}号 ${voter.playerName}`, content: `警徽票投给${target.playerNumber}号${target.playerName}`, type: 'vote-action', visibility: 'private', privateFor: voter.id })
   }
@@ -2500,7 +2659,7 @@ const collectSheriffVote = async (version, candidates, voters, label) => {
   ballots.forEach(ballot => counts.set(ballot.targetId, (counts.get(ballot.targetId) || 0) + 1))
   const max = Math.max(0, ...counts.values())
   const leaders = candidates.filter(candidate => counts.get(candidate.id) === max && max > 0)
-  addRefereeMessage(`${label}结果：${ballots.map(ballot => `${getPlayerNumberById(ballot.voterId)}号→${getPlayerNumberById(ballot.targetId)}号`).join('，') || '无有效票'}。`)
+  await addRefereeMessage(`${label}票型：${formatPublicVoteSummary(ballots, voters)}。`)
   return { ballots, counts, leaders, max }
 }
 
@@ -2508,7 +2667,7 @@ const runSheriffElection = async version => {
   if (!boardRules.value.sheriff || sheriffElectionDone.value || !isLoopActive(version)) return
   currentPhase.value = 'sheriff'
   players.value.forEach(player => { player.isSheriffCandidate = false })
-  addRefereeMessage('第一天天亮后进入警长竞选：先上警，再随机发言，随后退水，最后只由警下玩家投票。警上未退水者没有警徽投票权。')
+  await addRefereeMessage('第一天天亮后进入警长竞选：先上警，再随机发言，随后退水，最后只由警下玩家投票。首轮警徽投票允许弃票，警上未退水者没有警徽投票权。')
   const campaignPlans = new Map()
   const candidates = []
   const campaignDecisions = await runDecisionWindow(version, [...alivePlayers.value], 'sheriffCampaign', () => ({}), '上警决策')
@@ -2526,10 +2685,10 @@ const runSheriffElection = async version => {
     players.value.forEach(player => { player.isSheriffCandidate = false })
     sheriffBadgeLost.value = true
     sheriffElectionDone.value = true
-    addRefereeMessage('本轮没有玩家上警，警徽流失，本局不再产生警长。')
+    await addRefereeMessage('本轮没有玩家上警，警徽流失，本局不再产生警长。')
     return
   }
-  addRefereeMessage(`本次上警玩家：${candidates.map(player => `${player.playerNumber}号`).join('、')}。`)
+  await addRefereeMessage(`本次上警玩家：${candidates.map(player => `${player.playerNumber}号`).join('、')}。`)
   const campaignSpeech = await runSpeechPhase(version, shuffleArray([...candidates]).map(player => player.id), 'sheriffSpeech')
   if (campaignSpeech?.interrupted || dayInterrupted.value) {
     players.value.forEach(player => { player.isSheriffCandidate = false })
@@ -2539,7 +2698,7 @@ const runSheriffElection = async version => {
     return
   }
   if (!isLoopActive(version)) return
-  addRefereeMessage('警上发言结束，开始退水。退水玩家恢复警徽投票权，但失去警长候选资格。')
+  await addRefereeMessage('警上发言结束，开始退水。退水玩家恢复警徽投票权，但失去警长候选资格。')
   const finalCandidates = []
   const withdrawDecisions = await runDecisionWindow(version, candidates, 'sheriffWithdraw', () => ({}), '退水决策')
   for (const player of candidates) {
@@ -2557,7 +2716,7 @@ const runSheriffElection = async version => {
     players.value.forEach(player => { player.isSheriffCandidate = false })
     sheriffBadgeLost.value = true
     sheriffElectionDone.value = true
-    addRefereeMessage('所有警上玩家都已退水，警徽流失。')
+    await addRefereeMessage('所有警上玩家都已退水，警徽流失。')
     return
   }
   if (finalCandidates.length === 1) {
@@ -2565,15 +2724,22 @@ const runSheriffElection = async version => {
     setSheriff(winner.id)
     sheriffDirection.value = campaignPlans.get(winner.id) || 'clockwise'
     axios.put('/game/player/setSheriff', { roomId, playerId: winner.id }).catch(() => {})
-    addRefereeMessage(`${winner.playerNumber}号成为唯一未退水候选人，当选警长。`)
+    await addRefereeMessage(`${winner.playerNumber}号成为唯一未退水候选人，当选警长。`)
     sheriffElectionDone.value = true
     return
   }
   const voters = alivePlayers.value.filter(player => !finalCandidates.some(candidate => candidate.id === player.id) && !idiotFlippedIds.has(player.id))
-  let voteResult = await collectSheriffVote(version, finalCandidates, voters, '警徽投票')
+  let voteResult = await collectSheriffVote(version, finalCandidates, voters, '警徽投票', false)
   let leaders = voteResult.leaders
+  if (!leaders.length) {
+    sheriffBadgeLost.value = true
+    players.value.forEach(player => { player.isSheriffCandidate = false })
+    await addRefereeMessage('警徽投票无人获得有效票，警徽流失，本局不再产生警长。')
+    sheriffElectionDone.value = true
+    return
+  }
   if (leaders.length > 1) {
-    addRefereeMessage(`警徽投票平票：${leaders.map(player => `${player.playerNumber}号`).join('、')}，进入PK发言。`)
+    await addRefereeMessage(`警徽投票平票：${leaders.map(player => `${player.playerNumber}号`).join('、')}，进入PK发言。`)
     const pk = await runSpeechPhase(version, shuffleArray([...leaders]).map(player => player.id), 'sheriffPkSpeech')
     if (pk?.interrupted || dayInterrupted.value) {
       players.value.forEach(player => { player.isSheriffCandidate = false })
@@ -2581,7 +2747,7 @@ const runSheriffElection = async version => {
       sheriffElectionDone.value = true
       return
     }
-    voteResult = await collectSheriffVote(version, leaders, voters, '警徽PK重投')
+    voteResult = await collectSheriffVote(version, leaders, voters, '警徽PK重投', true)
     leaders = voteResult.leaders
   }
   const winner = leaders.length === 1 ? leaders[0] : null
@@ -2589,11 +2755,11 @@ const runSheriffElection = async version => {
     setSheriff(winner.id)
     sheriffDirection.value = campaignPlans.get(winner.id) || 'clockwise'
     axios.put('/game/player/setSheriff', { roomId, playerId: winner.id }).catch(() => {})
-    addRefereeMessage(`${winner.playerNumber}号${winner.playerName}当选警长，之后由其决定${sheriffDirection.value === 'clockwise' ? '顺时针' : '逆时针'}发言。`)
+    await addRefereeMessage(`${winner.playerNumber}号${winner.playerName}当选警长，之后由其决定${sheriffDirection.value === 'clockwise' ? '顺时针' : '逆时针'}发言。`)
   } else {
     sheriffBadgeLost.value = true
     players.value.forEach(player => { player.isSheriffCandidate = false })
-    addRefereeMessage('警徽PK重投再次平票，警徽流失，本局不再产生警长。')
+    await addRefereeMessage('警徽PK重投再次平票，警徽流失，本局不再产生警长。')
   }
   sheriffElectionDone.value = true
 }
@@ -2612,7 +2778,7 @@ const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech')
     speechOrder.value = orderInfo.ids
     const directionText = orderInfo.direction === 'clockwise' ? '顺时针' : '逆时针'
     const sheriff = alivePlayers.value.find(player => player.isSheriff)
-    addRefereeMessage(sheriff
+    await addRefereeMessage(sheriff
       ? `警长${sheriff.playerNumber}号决定从自己${orderInfo.direction === 'clockwise' ? '右侧' : '左侧'}开始，按${directionText}发言，警长末置位归票。顺序：${orderInfo.ids.map(getPlayerNumberById).join('→')}号。`
       : `进入发言阶段。本轮由代码随机决定从${orderInfo.start?.playerNumber}号开始，按${directionText}发言。顺序：${orderInfo.ids.map(getPlayerNumberById).join('→')}号。`)
   }
@@ -2625,7 +2791,7 @@ const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech')
       addRefereeMessage(`${player.playerNumber}号被禁言长老禁言，本轮跳过发言。`)
       continue
     }
-    startPlayerSpeaking(player.id)
+    await startPlayerSpeaking(player.id)
     const result = await generatePublicSpeech(player, action)
     if (!isLoopActive(version)) break
     if (['sheriffSpeech', 'sheriffPkSpeech'].includes(action) && isPackWolf(player) && result.explode) {
@@ -2634,7 +2800,7 @@ const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech')
       sheriffBadgeLost.value = true
       addRefereeMessage(`${player.playerNumber}号狼人于警长竞选发言中自爆，发言与竞选立即终止，直接进入黑夜。`)
       await resolveDeathEffects(player, version, 'explode')
-      endPlayerSpeaking()
+      await endPlayerSpeaking()
       speechIndex.value = -1
       return { interrupted: true, explodingPlayerId: player.id }
     }
@@ -2651,16 +2817,16 @@ const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech')
         await resolveDeathEffects(target, version, 'whiteWolf')
       }
       await resolveDeathEffects(player, version, 'whiteWolf', { consumeSheriff: true })
-      endPlayerSpeaking()
+      await endPlayerSpeaking()
       break
     }
     recordPrivateThinking(player, result.thinking, ['pkSpeech', 'sheriffPkSpeech'].includes(action) ? 'PK发言' : (action === 'sheriffSpeech' ? '警上发言' : '白天发言'))
-    addDialogMessage(player.playerName, result.speech, 'player')
     playerMemories[player.id]?.speeches.push({ day: currentDay.value, speech: result.speech })
     const audienceThinking = runAudienceThinking(player, result.speech, version)
     await presentSpeech(player, result.speech, result.thinking, result.language, result.passDelaySeconds)
+    addDialogMessage(player.playerName, result.speech, 'player')
     await audienceThinking
-    endPlayerSpeaking()
+    await endPlayerSpeaking()
     if (!onlyCandidates && action === 'speech') {
       speechIndex.value = index + 1
       resumeStage.value = 'speech'
@@ -2669,7 +2835,7 @@ const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech')
     await phaseDelay(260)
   }
   speechIndex.value = -1
-  if (!onlyCandidates && isLoopActive(version)) addRefereeMessage('所有存活玩家发言完毕，主持人现在进入放逐投票。')
+  if (!onlyCandidates && isLoopActive(version)) await addRefereeMessage('所有存活玩家发言完毕，主持人现在进入放逐投票。')
   return { interrupted: false }
 }
 
@@ -2701,7 +2867,7 @@ const runKnightAction = async version => {
   await resolveDeathEffects(knight, version, 'knight')
 }
 
-const collectVoteRound = async (version, candidateIds = null, label = '公投') => {
+const collectVoteRound = async (version, candidateIds = null, label = '公投', mustChoose = false) => {
   const eligibleCandidates = alivePlayers.value.filter(player => !candidateIds || candidateIds.includes(player.id))
   const ballots = []
   const voters = [...alivePlayers.value].filter(voter => !idiotFlippedIds.has(voter.id))
@@ -2710,7 +2876,7 @@ const collectVoteRound = async (version, candidateIds = null, label = '公投') 
   })
   const decisions = await runDecisionWindow(version, voters, 'vote', voter => {
     const candidates = eligibleCandidates.filter(candidate => candidate.id !== voter.id)
-    return { candidates: candidates.map(p => `${p.playerNumber}号`).join('、') }
+    return { candidates: candidates.map(p => `${p.playerNumber}号`).join('、'), mustChoose }
   }, label)
   for (const voter of voters) {
     if (!isLoopActive(version)) break
@@ -2718,8 +2884,13 @@ const collectVoteRound = async (version, candidateIds = null, label = '公投') 
     if (!candidates.length) continue
     const decision = decisions.get(voter.id) || {}
     recordPrivateThinking(voter, decision.thinking, `${label}投票`)
-    const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
-    if (!target) continue
+    const selectedTarget = resolvePlayerTarget(decision.target, candidates)
+    const target = selectedTarget || ((mustChoose || decision.usedLocalFallback) ? randomItem(candidates) : null)
+    if (!target || (!mustChoose && decision.abstain === true)) {
+      playerMemories[voter.id]?.votes.push({ day: currentDay.value, targetId: null, label, abstained: true })
+      addGameMessage({ sender: `${voter.playerNumber}号 ${voter.playerName}`, content: '本轮弃票', type: 'vote-action', visibility: 'private', privateFor: voter.id })
+      continue
+    }
     ballots.push({ voterId: voter.id, targetId: target.id })
     playerMemories[voter.id]?.votes.push({ day: currentDay.value, targetId: target.id, label })
     addGameMessage({ sender: `${voter.playerNumber}号 ${voter.playerName}`, content: `投给${target.playerNumber}号${target.playerName}`, type: 'vote-action', visibility: 'private', privateFor: voter.id })
@@ -2731,29 +2902,31 @@ const collectVoteRound = async (version, candidateIds = null, label = '公投') 
   })
   const max = Math.max(0, ...counts.values())
   const leaders = [...counts.entries()].filter(([, count]) => count === max).map(([id]) => id)
-  voteHistory.value.push({ day: currentDay.value, label, ballots, leaders })
-  const publicBallots = ballots.map(ballot => `${getPlayerNumberById(ballot.voterId)}号→${getPlayerNumberById(ballot.targetId)}号`).join('，')
-  addRefereeMessage(`${label}结果：${publicBallots || '无有效票'}。`)
+  const abstainVoterIds = voters.filter(voter => !ballots.some(ballot => ballot.voterId === voter.id)).map(voter => voter.id)
+  voteHistory.value.push({ day: currentDay.value, label, ballots, leaders, abstainVoterIds })
+  await addRefereeMessage(`${label}票型：${formatPublicVoteSummary(ballots, voters)}。`)
   return { ballots, leaders, max }
 }
 
 const giveLastWords = async (player, version, reason = 'exile') => {
   if (!player || !isLoopActive(version)) return
-  if (reason === 'exile' && (currentDay.value !== 1 || lastWordsGiven.value)) {
-    addRefereeMessage(`${player.playerNumber}号出局，本局遗言名额已使用，不再发表遗言。`)
+  if (reason === 'exile' && (currentDay.value !== 1 || firstDayLastWordsGiven.value)) {
+    await addRefereeMessage(`${player.playerNumber}号${player.playerName}被公投出局。`)
     return
   }
-  if (reason === 'night' && (currentRound.value !== 1 || Number(boardRules.value.players) !== 12 || lastWordsGiven.value)) return
-  lastWordsGiven.value = true
-  addRefereeMessage(reason === 'night'
+  if (reason === 'night' && (currentRound.value !== 1 || Number(boardRules.value.players) !== 12 || firstNightLastWordsPlayerIds.has(player.id))) return
+  if (reason === 'night') firstNightLastWordsPlayerIds.add(player.id)
+  else firstDayLastWordsGiven.value = true
+  await addRefereeMessage(reason === 'night'
     ? `${player.playerNumber}号${player.playerName}是首夜出局玩家，请发表遗言。`
     : `${player.playerNumber}号${player.playerName}被公投出局，请发表遗言。`)
-  startPlayerSpeaking(player.id)
-  const result = await generatePublicSpeech(player, 'lastWords')
+  await startPlayerSpeaking(player.id, false)
+  const speechAction = reason === 'night' ? 'nightLastWords' : 'lastWords'
+  const result = await generatePublicSpeech(player, speechAction)
   recordPrivateThinking(player, result.thinking, '遗言')
-  addDialogMessage(player.playerName, result.speech, 'player')
   await presentSpeech(player, result.speech, result.thinking, result.language)
-  endPlayerSpeaking()
+  addDialogMessage(player.playerName, result.speech, 'player')
+  await endPlayerSpeaking()
 }
 
 const resolveStalkerAfterVote = async (version, ballots, exileId) => {
@@ -2792,27 +2965,22 @@ const runVotePhase = async (version) => {
   currentPhase.value = 'vote'
   await runKnightAction(version)
   if (dayInterrupted.value || !isLoopActive(version)) return
-  addRefereeMessage('主持人发起放逐投票。所有存活玩家必须私下提交一名放逐目标，不得弃票。')
-  let result = await collectVoteRound(version)
+  await addRefereeMessage('主持人发起常规放逐投票。所有存活且拥有投票权的玩家同时私下决定；本轮允许弃票，但弃票会公开计入票型。')
+  let result = await collectVoteRound(version, null, '公投', false)
   if (!isLoopActive(version) || !result.leaders.length) {
-    addRefereeMessage('没有形成有效投票，本日无人出局。')
+    await addRefereeMessage('没有形成有效投票，本日无人出局。')
     return
   }
   let exileId = result.leaders.length === 1 ? result.leaders[0] : null
   if (!exileId) {
-    const pkByCode = Math.random() < 0.5
     const tiedNumbers = result.leaders.map(getPlayerNumberById).join('号、') + '号'
-    if (!pkByCode) {
-      addRefereeMessage(`${tiedNumbers}平票。主持人通过代码随机采用“平安日”规则，本日无人出局。`)
-      return
-    }
-    addRefereeMessage(`${tiedNumbers}平票。主持人通过代码随机采用PK流程，平票玩家依次补充发言。`)
+    await addRefereeMessage(`${tiedNumbers}平票，进入PK发言；PK后所有有投票权的存活玩家必须从PK台中选择，不得弃票。`)
     await runSpeechPhase(version, result.leaders, 'pkSpeech')
     currentPhase.value = 'vote'
-    result = await collectVoteRound(version, result.leaders, 'PK重投')
+    result = await collectVoteRound(version, result.leaders, 'PK重投', true)
     exileId = result.leaders.length === 1 ? result.leaders[0] : null
     if (!exileId) {
-      addRefereeMessage('PK重投仍然平票，本日无人出局。')
+      await addRefereeMessage('PK重投仍然平票，本日无人出局。')
       return
     }
   }
@@ -2820,7 +2988,7 @@ const runVotePhase = async (version) => {
   if (hasRole(exiled, 'idiot') && !idiotFlippedIds.has(exiled.id)) {
     idiotFlippedIds.add(exiled.id)
     exiled.isAlive = true
-    addRefereeMessage(`${exiled.playerNumber}号白痴被投票放逐，翻牌免死；此后仍可发言但失去投票权。`)
+    await addRefereeMessage(`${exiled.playerNumber}号白痴被投票放逐，翻牌免死；此后仍可发言但失去投票权。`)
     await resolveStalkerAfterVote(version, result.ballots, exileId)
     return
   }
@@ -3214,10 +3382,13 @@ onUnmounted(() => {
 }
 
 /* Speech card */
-.speech-flash { flex: 0 1 42%; min-height: 0; animation: fadeIn 0.3s ease; overflow: auto; }
+.speech-flash {
+  flex: 0 0 clamp(150px, 30vh, 280px); min-height: 150px; max-height: 42%;
+  animation: fadeIn 0.3s ease; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable;
+}
 .speech-card {
   background: var(--bg-card); border: 1px solid var(--gold-dark);
-  border-radius: 7px; padding: 13px; box-shadow: var(--shadow-gold);
+  border-radius: 7px; padding: 13px; min-height: 100%; box-shadow: var(--shadow-gold);
 }
 .speech-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .speech-avatar { display: flex; align-items: center; justify-content: center; overflow: hidden; width: 42px; height: 42px; flex: 0 0 42px; border: 1px solid rgba(201,169,110,.4); border-radius: 50%; background: #18242d; color: #e1c271; font: 700 9px/1 var(--font-heading); }
