@@ -4,7 +4,10 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.werewolf.game.entity.GameRoom;
 import com.werewolf.game.mapper.GameRoomMapper;
 import com.werewolf.game.service.GameRoomService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,6 +18,9 @@ import java.util.UUID;
  */
 @Service
 public class GameRoomServiceImpl extends ServiceImpl<GameRoomMapper, GameRoom> implements GameRoomService {
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Override
     public GameRoom findByRoomCode(String roomCode) {
@@ -59,11 +65,20 @@ public class GameRoomServiceImpl extends ServiceImpl<GameRoomMapper, GameRoom> i
     }
 
     @Override
+    @Transactional
     public boolean startGame(Long roomId) {
         GameRoom room = getById(roomId);
         if (room != null) {
+            jdbcTemplate.update(
+                    "UPDATE game_player SET is_sheriff = 0, role = NULL, update_time = CURRENT_TIMESTAMP " +
+                            "WHERE room_id = ? AND status = 1",
+                    roomId
+            );
+            jdbcTemplate.update("DELETE FROM game_state_snapshot WHERE room_id = ?", roomId);
             room.setStatus(2); // 2-游戏中
             room.setStartTime(LocalDateTime.now());
+            room.setEndTime(null);
+            room.setWinner(null);
             return updateById(room);
         }
         return false;

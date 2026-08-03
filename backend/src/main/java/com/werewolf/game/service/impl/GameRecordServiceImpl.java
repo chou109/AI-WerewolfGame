@@ -2,6 +2,7 @@ package com.werewolf.game.service.impl;
 
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.werewolf.game.entity.GameRecord;
+import com.werewolf.game.entity.GameRoom;
 import com.werewolf.game.mapper.GameRecordMapper;
 import com.werewolf.game.service.GameRecordService;
 import com.werewolf.game.service.GameRoomService;
@@ -69,11 +70,16 @@ public class GameRecordServiceImpl extends ServiceImpl<GameRecordMapper, GameRec
     @Override
     @Transactional
     public synchronized boolean finishGame(GameRecord record, String winner) {
+        GameRoom room = gameRoomService.getById(record.getRoomId());
+        LocalDateTime sessionStart = room == null ? null : room.getStartTime();
         boolean roomEnded = gameRoomService.endGame(record.getRoomId(), winner);
-        long existing = lambdaQuery()
+        com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper<GameRecord> existingQuery = lambdaQuery()
                 .eq(GameRecord::getRoomId, record.getRoomId())
-                .eq(GameRecord::getActionType, "game_end")
-                .count();
+                .eq(GameRecord::getActionType, "game_end");
+        if (sessionStart != null) {
+            existingQuery.ge(GameRecord::getCreateTime, sessionStart);
+        }
+        long existing = existingQuery.count();
         boolean recorded = existing > 0;
         if (!recorded) {
             record.setActionType("game_end");

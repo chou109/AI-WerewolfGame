@@ -37,18 +37,28 @@
           <el-descriptions-item :label="$t('gameRecords.roomId')">{{ selectedRecord.roomId }}</el-descriptions-item>
           <el-descriptions-item :label="$locale === 'zh-CN' ? '获胜方' : 'Winner'">{{ selectedRecord.winner }}</el-descriptions-item>
           <el-descriptions-item :label="$t('roomList.gameBoard')">{{ boardName(selectedRecord.gameBoard) }}</el-descriptions-item>
-          <el-descriptions-item :label="$locale === 'zh-CN' ? '结束天数' : 'Final day'">{{ selectedRecord.dayNumber }}</el-descriptions-item>
+          <el-descriptions-item :label="$locale === 'zh-CN' ? '结束天数' : 'Final day'">{{ selectedRecord.dayNumber || '-' }}</el-descriptions-item>
         </el-descriptions>
-        <h4>{{ $locale === 'zh-CN' ? '玩家结算' : 'Players' }}</h4>
-        <div class="player-results">
-          <span v-for="player in selectedRecord.payload.players || []" :key="player.number" :class="{ dead: !player.alive }">
-            {{ player.number }}号 {{ player.name }} · {{ player.role }}
-          </span>
-        </div>
-        <h4>{{ $locale === 'zh-CN' ? '末段公开记录' : 'Recent public log' }}</h4>
-        <div class="record-log">
-          <p v-for="(message, index) in selectedRecord.payload.publicMessages || []" :key="index"><strong>{{ message.sender }}：</strong>{{ message.content }}</p>
-        </div>
+        <el-alert
+          v-if="selectedRecord.recovered"
+          class="recovered-record-alert"
+          type="info"
+          :closable="false"
+          show-icon
+          :title="$locale === 'zh-CN' ? '该对局已从房间结束状态恢复；旧版服务未保存玩家结算与发言明细。' : 'This result was recovered from the ended room; the legacy service did not save player or speech details.'"
+        />
+        <template v-else>
+          <h4>{{ $locale === 'zh-CN' ? '玩家结算' : 'Players' }}</h4>
+          <div class="player-results">
+            <span v-for="player in selectedRecord.payload.players || []" :key="player.number" :class="{ dead: !player.alive }">
+              {{ player.number }}号 {{ player.name }} · {{ player.role }}
+            </span>
+          </div>
+          <h4>{{ $locale === 'zh-CN' ? '末段公开记录' : 'Recent public log' }}</h4>
+          <div class="record-log">
+            <p v-for="(message, index) in selectedRecord.payload.publicMessages || []" :key="index"><strong>{{ message.sender }}：</strong>{{ message.content }}</p>
+          </div>
+        </template>
       </template>
     </el-dialog>
   </div>
@@ -82,26 +92,50 @@ const boardName = key => key ? $t(`gameBoard.${key}`) : '-'
 const fetchRecords = async () => {
   loading.value = true
   try {
-    const [recordResponse, roomResponse] = await Promise.all([
-      axios.get('/game/record/finished'),
-      axios.get('/game/room/list')
-    ])
-    const finished = recordResponse.data?.code === 200 ? recordResponse.data.data : []
+    const roomResponse = await axios.get('/game/room/list')
     const rooms = roomResponse.data?.code === 200 ? roomResponse.data.data : []
+    let finished = []
+    try {
+      const recordResponse = await axios.get('/game/record/finished')
+      finished = recordResponse.data?.code === 200 ? recordResponse.data.data : []
+    } catch (error) {
+      if (error.response?.status !== 404) throw error
+      console.warn('Finished game records endpoint is unavailable; using ended rooms as a fallback.')
+    }
+    const hasCurrentGameRecord = room => finished.some(record => {
+      if (Number(record.roomId) !== Number(room.id)) return false
+      if (!room.startTime || !record.createTime) return true
+      return new Date(record.createTime).getTime() >= new Date(room.startTime).getTime()
+    })
+    const recovered = rooms
+      .filter(room => Number(room.status) === 3 && !hasCurrentGameRecord(room))
+      .map(room => ({
+        id: `room-${room.id}`,
+        roomId: room.id,
+        dayNumber: null,
+        phase: 'finished',
+        actionType: 'game_end_recovered',
+        actionContent: '',
+        targetPlayer: room.winner,
+        createTime: room.endTime || room.updateTime || room.createTime,
+        recovered: true
+      }))
     const roomMap = new Map(rooms.map(room => [Number(room.id), room]))
-    records.value = finished.map(record => {
+    records.value = [...finished, ...recovered].map(record => {
       const payload = parsePayload(record.actionContent)
       const room = roomMap.get(Number(record.roomId)) || {}
+      const startTime = payload.startedAt || room.startTime || record.createTime
+      const endTime = payload.finishedAt || room.endTime || record.createTime
       return {
         ...record,
         payload,
         gameBoard: payload.board || room.gameBoard,
         playerCount: payload.playerCount || room.playerCount,
         winner: record.targetPlayer || payload.winner || room.winner || '-',
-        startTime: room.startTime || record.createTime,
-        duration: formatDuration(room.startTime, room.endTime || record.createTime)
+        startTime,
+        duration: formatDuration(startTime, endTime)
       }
-    })
+    }).sort((a, b) => new Date(b.createTime || 0) - new Date(a.createTime || 0))
     page.value = 1
   } catch (error) {
     console.error('Game records load failed:', error)
@@ -126,4 +160,5 @@ onMounted(fetchRecords)
 .player-results span.dead { opacity:.55; }
 .record-log { max-height:320px; overflow:auto; border-top:1px solid #e5e5e5; }
 .record-log p { margin:0; padding:9px 2px; border-bottom:1px solid #ededed; line-height:1.55; }
+.recovered-record-alert { margin-top:18px; }
 </style>

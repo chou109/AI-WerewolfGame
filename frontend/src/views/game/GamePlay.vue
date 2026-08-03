@@ -904,7 +904,53 @@ const restoreGameSnapshot = async () => {
   const snapshot = [localSnapshot, remoteSnapshot]
     .filter(item => item && Number(item.roomId) === Number(roomId) && Array.isArray(item.players))
     .sort((a, b) => Number(b.savedAt || 0) - Number(a.savedAt || 0))[0]
-  if (!snapshot || snapshot.players.length !== players.value.length) return false
+  if (!snapshot || snapshot.players.length !== players.value.length) {
+    if (Number(roomInfo.value.status) === 3) {
+      localStorage.removeItem(gameSnapshotStorageKey)
+      try { await axios.delete(`/game/state/${roomId}`) } catch {}
+    }
+    return false
+  }
+  if (snapshot.gameResult?.winner) {
+    const result = snapshot.gameResult
+    const finishedDate = new Date(result.finishedAt || Date.now())
+    const finishedAt = Number.isNaN(finishedDate.getTime()) ? new Date().toISOString() : finishedDate.toISOString()
+    const actionContent = JSON.stringify({
+      winner: result.winner,
+      board: snapshot.roomInfo?.gameBoard || boardRules.value.key,
+      playerCount: snapshot.roomInfo?.playerCount || snapshot.players.length,
+      day: snapshot.currentDay || 1,
+      round: snapshot.currentRound || 1,
+      startedAt: snapshot.roomInfo?.startTime || null,
+      finishedAt,
+      players: snapshot.players.map(player => ({ number: player.playerNumber, name: player.playerName, role: player.role, alive: player.isAlive })),
+      publicMessages: (snapshot.dialogMessages || [])
+        .filter(item => (item.visibility || 'public') === 'public')
+        .slice(-40)
+        .map(item => ({ sender: item.sender, content: String(item.content || '').slice(0, 240), time: item.time, type: item.type }))
+    })
+    try {
+      await axios.post('/game/record/finish', {
+        roomId: Number(roomId),
+        dayNumber: snapshot.currentDay || 1,
+        phase: 'finished',
+        actionType: 'game_end',
+        actionContent,
+        winner: result.winner
+      })
+    } catch {
+      try { await axios.put('/game/room/end', { roomId: Number(roomId), winner: result.winner }) } catch {}
+    }
+    localStorage.removeItem(gameSnapshotStorageKey)
+    try { await axios.delete(`/game/state/${roomId}`) } catch {}
+    roomInfo.value = { ...roomInfo.value, status: 3, winner: result.winner, endTime: finishedAt }
+    return false
+  }
+  if (Number(roomInfo.value.status) === 3) {
+    localStorage.removeItem(gameSnapshotStorageKey)
+    try { await axios.delete(`/game/state/${roomId}`) } catch {}
+    return false
+  }
   lastSnapshotSavedAt = Number(snapshot.savedAt || 0)
   const currentIds = new Set(players.value.map(player => String(player.id)))
   if (snapshot.players.some(player => !currentIds.has(String(player.id)))) return false
@@ -991,6 +1037,7 @@ const restoreGameSnapshot = async () => {
 const startGame = async () => {
   const required = roomInfo.value.playerCount || 12
   if (players.value.length < required) { ElMessage.warning($t('gamePlay.notEnoughPlayers', { count: required })); return }
+  if (finalizationPromise) await finalizationPromise
   await loadGameData({ restore: false })
   initializeGameState()
   await playRoleDealAnimation(distributeRoles)
@@ -1056,7 +1103,7 @@ const loadGameData = async (options = {}) => {
       try {
         const pr = await axios.get(`/game/player/list/${roomId}`)
         let pl = pr.data.code === 200 ? pr.data.data : (Array.isArray(pr.data) ? pr.data : [])
-        players.value = pl.map(p => ({ id: p.id, playerNumber: p.playerNumber || p.id, playerName: p.playerName || p.name || `P${p.id}`, role: p.role || '', isAlive: p.status === 1, isSpeaking: false, isSheriff: p.isSheriff === 1, isSheriffCandidate: false, userId: p.userId, aiPlayerId: p.aiPlayerId, avatarUrl: '' }))
+        players.value = pl.map(p => ({ id: p.id, playerNumber: p.playerNumber || p.id, playerName: p.playerName || p.name || `P${p.id}`, role: p.role || '', isAlive: p.status === 1, isSpeaking: false, isSheriff: Number(roomInfo.value.status) !== 3 && p.isSheriff === 1, isSheriffCandidate: false, userId: p.userId, aiPlayerId: p.aiPlayerId, avatarUrl: '' }))
       } catch (e) { players.value = [] }
       try {
         const ar = await axios.get('/ai/player/available')
@@ -1299,44 +1346,55 @@ const killPlayer = (pid) => {
 }
 const finishGame = (winner, message) => {
   if (gameResult.value || finalizationPromise) return true
-  gameResult.value = { winner, finishedAt: Date.now() }
+  const finishedAt = new Date()
+  gameResult.value = { winner, finishedAt: finishedAt.getTime() }
+  gameStarted.value = false
+  phaseRunning.value = false
+  gameLoopVersion++
+  isGamePaused.value = false
+  releasePauseWaiters()
+  closeSpeech('game-end')
+  const speechTask = addRefereeMessage(message)
+  localStorage.removeItem(gameSnapshotStorageKey)
+  roomInfo.value = { ...roomInfo.value, status: 3, winner, endTime: finishedAt.toISOString() }
+  const pendingSnapshotWrites = snapshotWriteQueue.catch(() => {})
+  const actionContent = JSON.stringify({
+    winner,
+    board: roomInfo.value.gameBoard || boardRules.value.key,
+    playerCount: roomInfo.value.playerCount || players.value.length,
+    day: currentDay.value,
+    round: currentRound.value,
+    startedAt: roomInfo.value.startTime || null,
+    finishedAt: finishedAt.toISOString(),
+    players: players.value.map(player => ({ number: player.playerNumber, name: player.playerName, role: player.role, alive: player.isAlive })),
+    publicMessages: dialogMessages.value
+      .filter(item => (item.visibility || 'public') === 'public')
+      .slice(-40)
+      .map(item => ({ sender: item.sender, content: String(item.content || '').slice(0, 240), time: item.time, type: item.type }))
+  })
   finalizationPromise = (async () => {
-    await addRefereeMessage(message)
-    gameStarted.value = false
-    phaseRunning.value = false
-    gameLoopVersion++
-    releasePauseWaiters()
-    closeSpeech('game-end')
-    localStorage.removeItem(gameSnapshotStorageKey)
-    const actionContent = JSON.stringify({
-      winner,
-      board: roomInfo.value.gameBoard || boardRules.value.key,
-      playerCount: roomInfo.value.playerCount || players.value.length,
-      day: currentDay.value,
-      round: currentRound.value,
-      players: players.value.map(player => ({ number: player.playerNumber, name: player.playerName, role: player.role, alive: player.isAlive })),
-      publicMessages: dialogMessages.value
-        .filter(item => (item.visibility || 'public') === 'public')
-        .slice(-40)
-        .map(item => ({ sender: item.sender, content: String(item.content || '').slice(0, 240), time: item.time, type: item.type }))
-    })
-    try {
-      await axios.post('/game/record/finish', {
-        roomId: Number(roomId),
-        dayNumber: currentDay.value,
-        phase: 'finished',
-        actionType: 'game_end',
-        actionContent,
-        winner
-      })
-      roomInfo.value = { ...roomInfo.value, status: 3, winner, endTime: new Date().toISOString() }
-    } catch (error) {
-      console.warn('Game record finalization failed:', error)
+    const recordTask = (async () => {
       try {
-        await axios.put('/game/room/end', { roomId: Number(roomId), winner })
-      } catch {}
-    }
-    try { await axios.delete(`/game/state/${roomId}`) } catch {}
+        await axios.post('/game/record/finish', {
+          roomId: Number(roomId),
+          dayNumber: currentDay.value,
+          phase: 'finished',
+          actionType: 'game_end',
+          actionContent,
+          winner
+        })
+      } catch (error) {
+        console.warn('Game record finalization failed:', error)
+        try {
+          await axios.put('/game/room/end', { roomId: Number(roomId), winner })
+        } catch {}
+      }
+    })()
+    const snapshotCleanupTask = (async () => {
+      await pendingSnapshotWrites
+      try { await axios.delete(`/game/state/${roomId}`) } catch {}
+    })()
+    await Promise.allSettled([speechTask, recordTask, snapshotCleanupTask])
   })().catch(error => console.warn('Game finalization failed:', error))
   return true
 }
