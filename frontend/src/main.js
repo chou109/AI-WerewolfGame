@@ -9,7 +9,7 @@ import axios from 'axios'
 import i18n from './i18n'
 
 // 配置axios
-axios.defaults.baseURL = 'http://localhost:8081/api'
+axios.defaults.baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8081/api'
 axios.defaults.timeout = 10000
 axios.defaults.headers.common['Content-Type'] = 'application/json'
 

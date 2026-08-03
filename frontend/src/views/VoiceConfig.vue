@@ -6,8 +6,8 @@
         <h2>{{ $t('voiceConfig.title') }}</h2>
         <p>{{ $t('voiceConfig.subtitle') }}</p>
       </div>
-      <span class="support-status" :class="{ supported: speechSupported }">
-        <i></i>{{ speechSupported ? $t('voiceConfig.supported') : $t('voiceConfig.unsupported') }}
+      <span class="support-status" :class="{ supported: engineReady }">
+        <i></i>{{ engineStatusText }}
       </span>
     </section>
 
@@ -15,54 +15,148 @@
       <template #header>
         <div class="config-header">
           <div>
-            <span class="card-kicker">LOCAL SPEECH</span>
-            <h3>{{ $t('voiceConfig.localTitle') }}</h3>
+            <span class="card-kicker">PLAYBACK</span>
+            <h3>{{ $t('voiceConfig.playbackTitle') }}</h3>
           </div>
           <el-switch v-model="voiceConfig.enabled" :active-text="$t('voiceConfig.autoRead')" />
         </div>
       </template>
 
-      <el-alert class="voice-note" :title="$t('voiceConfig.localNote')" type="info" :closable="false" show-icon />
-
-      <el-form :model="voiceConfig" ref="voiceFormRef" label-position="top">
-        <el-form-item :label="$t('voiceConfig.voice')">
-          <el-select v-model="voiceConfig.voiceURI" :placeholder="$t('voiceConfig.voicePlaceholder')" :disabled="!speechSupported || !voices.length" style="width: 100%">
-            <el-option v-for="voice in voices" :key="voice.voiceURI" :label="voiceLabel(voice)" :value="voice.voiceURI" />
-          </el-select>
-          <span class="field-hint">{{ voices.length ? $t('voiceConfig.voiceHint') : $t('voiceConfig.noVoices') }}</span>
+      <el-form :model="voiceConfig" label-position="top">
+        <el-form-item :label="$t('voiceConfig.engine')">
+          <el-radio-group v-model="voiceConfig.engine">
+            <el-radio-button value="browser">{{ $t('voiceConfig.browserEngine') }}</el-radio-button>
+            <el-radio-button value="cloud">{{ $t('voiceConfig.cloudEngine') }}</el-radio-button>
+          </el-radio-group>
         </el-form-item>
+
+        <div class="switch-grid">
+          <div class="switch-item">
+            <div><strong>{{ $t('voiceConfig.readPlayers') }}</strong><span>{{ $t('voiceConfig.readPlayersHint') }}</span></div>
+            <el-switch v-model="voiceConfig.readPlayers" />
+          </div>
+          <div class="switch-item">
+            <div><strong>{{ $t('voiceConfig.readReferee') }}</strong><span>{{ $t('voiceConfig.readRefereeHint') }}</span></div>
+            <el-switch v-model="voiceConfig.readReferee" />
+          </div>
+        </div>
+
+        <template v-if="voiceConfig.engine === 'browser'">
+          <el-alert class="voice-note" :title="$t('voiceConfig.localNote')" type="info" :closable="false" show-icon />
+          <div class="field-grid">
+            <el-form-item :label="$t('voiceConfig.playerVoice')">
+              <el-select v-model="voiceConfig.voiceURI" :placeholder="$t('voiceConfig.voicePlaceholder')" :disabled="!speechSupported || !voices.length" style="width: 100%">
+                <el-option v-for="voice in voices" :key="voice.voiceURI" :label="voiceLabel(voice)" :value="voice.voiceURI" />
+              </el-select>
+            </el-form-item>
+            <el-form-item :label="$t('voiceConfig.refereeVoice')">
+              <el-select v-model="voiceConfig.refereeVoiceURI" clearable :placeholder="$t('voiceConfig.sameAsPlayer')" :disabled="!speechSupported || !voices.length" style="width: 100%">
+                <el-option v-for="voice in voices" :key="`referee-${voice.voiceURI}`" :label="voiceLabel(voice)" :value="voice.voiceURI" />
+              </el-select>
+            </el-form-item>
+          </div>
+          <span class="field-hint">{{ voices.length ? $t('voiceConfig.voiceHint') : $t('voiceConfig.noVoices') }}</span>
+        </template>
 
         <div class="control-grid">
           <el-form-item :label="$t('voiceConfig.speed')">
-            <div class="slider-line"><el-slider v-model="voiceConfig.rate" :min="0.5" :max="2" :step="0.1" :disabled="!speechSupported" /><span>{{ voiceConfig.rate.toFixed(1) }}×</span></div>
+            <div class="slider-line"><el-slider v-model="voiceConfig.rate" :min="0.5" :max="2" :step="0.1" :disabled="voiceConfig.engine === 'cloud' || !speechSupported" /><span>{{ voiceConfig.rate.toFixed(1) }}x</span></div>
           </el-form-item>
           <el-form-item :label="$t('voiceConfig.pitch')">
-            <div class="slider-line"><el-slider v-model="voiceConfig.pitch" :min="0.5" :max="2" :step="0.1" :disabled="!speechSupported" /><span>{{ voiceConfig.pitch.toFixed(1) }}</span></div>
+            <div class="slider-line"><el-slider v-model="voiceConfig.pitch" :min="0.5" :max="2" :step="0.1" :disabled="voiceConfig.engine === 'cloud'" /><span>{{ voiceConfig.pitch.toFixed(1) }}</span></div>
           </el-form-item>
           <el-form-item :label="$t('voiceConfig.volume')">
-            <div class="slider-line"><el-slider v-model="voiceConfig.volume" :min="0" :max="1" :step="0.1" :disabled="!speechSupported" /><span>{{ Math.round(voiceConfig.volume * 100) }}%</span></div>
+            <div class="slider-line"><el-slider v-model="voiceConfig.volume" :min="0" :max="1" :step="0.1" /><span>{{ Math.round(voiceConfig.volume * 100) }}%</span></div>
           </el-form-item>
         </div>
-
-        <el-form-item>
-          <el-button type="primary" :disabled="!speechSupported" @click="testVoice">{{ $t('voiceConfig.testVoice') }}</el-button>
-          <el-button @click="saveConfig">{{ $t('voiceConfig.saveConfig') }}</el-button>
-          <el-button text @click="resetConfig">{{ $t('voiceConfig.reset') }}</el-button>
-        </el-form-item>
       </el-form>
     </el-card>
 
-    <el-card class="cloud-card">
+    <el-card v-if="voiceConfig.engine === 'cloud'" class="cloud-card">
       <template #header>
-        <div class="config-header"><div><span class="card-kicker">CLOUD ENGINES</span><h3>{{ $t('voiceConfig.cloudTitle') }}</h3></div><span class="coming-soon">{{ $t('voiceConfig.comingSoon') }}</span></div>
+        <div class="config-header">
+          <div><span class="card-kicker">CLOUD TTS</span><h3>{{ $t('voiceConfig.cloudTitle') }}</h3></div>
+          <span class="cloud-status" :class="{ configured: backendConfigured }">{{ backendStatusText }}</span>
+        </div>
       </template>
-      <p>{{ $t('voiceConfig.cloudNote') }}</p>
+
+      <el-alert class="voice-note" :title="$t('voiceConfig.cloudNote')" type="warning" :closable="false" show-icon />
+      <el-form :model="voiceConfig.cloud" label-position="top">
+        <div class="field-grid">
+          <el-form-item :label="$t('voiceConfig.provider')">
+            <el-select v-model="voiceConfig.cloud.provider" style="width: 100%" @change="applyProviderDefaults">
+              <el-option label="OpenAI / OpenAI Compatible" value="openai" />
+              <el-option label="Azure Speech" value="azure" />
+              <el-option :label="$t('voiceConfig.customProvider')" value="custom" />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="$t('voiceConfig.apiBaseUrl')">
+            <el-input v-model="voiceConfig.cloud.apiBaseUrl" :placeholder="endpointPlaceholder" clearable />
+            <span class="field-hint">{{ endpointHint }}</span>
+          </el-form-item>
+        </div>
+
+        <div class="field-grid">
+          <el-form-item :label="$t('voiceConfig.apiKey')">
+            <el-input v-model="voiceConfig.cloud.apiKey" type="password" show-password :placeholder="$t('voiceConfig.apiKeyPlaceholder')" autocomplete="off" />
+            <el-checkbox v-model="voiceConfig.cloud.saveApiKey">{{ $t('voiceConfig.rememberApiKey') }}</el-checkbox>
+          </el-form-item>
+          <el-form-item :label="$t('voiceConfig.model')">
+            <el-input v-model="voiceConfig.cloud.model" :disabled="isNativeAzure" placeholder="gpt-4o-mini-tts" />
+          </el-form-item>
+        </div>
+
+        <div class="field-grid">
+          <el-form-item :label="$t('voiceConfig.playerVoice')">
+            <el-select v-model="voiceConfig.cloud.playerVoice" filterable allow-create default-first-option style="width: 100%">
+              <el-option v-for="voice in cloudVoiceOptions" :key="`player-${voice}`" :label="voice" :value="voice" />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="$t('voiceConfig.refereeVoice')">
+            <el-select v-model="voiceConfig.cloud.refereeVoice" filterable allow-create default-first-option style="width: 100%">
+              <el-option v-for="voice in cloudVoiceOptions" :key="`referee-${voice}`" :label="voice" :value="voice" />
+            </el-select>
+          </el-form-item>
+        </div>
+
+        <div class="cloud-control-grid">
+          <el-form-item :label="$t('voiceConfig.cloudSpeed')">
+            <el-input-number v-model="voiceConfig.cloud.speed" :min="0.25" :max="4" :step="0.1" :precision="1" />
+          </el-form-item>
+          <el-form-item :label="$t('voiceConfig.audioFormat')">
+            <el-select v-model="voiceConfig.cloud.responseFormat" style="width: 100%">
+              <el-option v-for="format in audioFormats" :key="format.value" :label="format.label" :value="format.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="$t('voiceConfig.timeout')">
+            <el-input-number v-model="voiceConfig.cloud.timeout" :min="3000" :max="120000" :step="1000" />
+          </el-form-item>
+        </div>
+        <el-checkbox v-model="voiceConfig.cloud.fallbackToBrowser">{{ $t('voiceConfig.fallbackToBrowser') }}</el-checkbox>
+      </el-form>
     </el-card>
+
+    <section class="test-panel">
+      <div class="test-copy">
+        <strong>{{ $t('voiceConfig.testTitle') }}</strong>
+        <el-input v-model="testText" type="textarea" :rows="2" :maxlength="300" show-word-limit />
+      </div>
+      <div class="test-actions">
+        <el-radio-group v-model="testSpeaker" size="small">
+          <el-radio-button value="referee">{{ $t('voiceConfig.referee') }}</el-radio-button>
+          <el-radio-button value="player">{{ $t('voiceConfig.player') }}</el-radio-button>
+        </el-radio-group>
+        <el-button type="primary" :loading="testing" :disabled="!canTest" @click="testVoice">{{ $t('voiceConfig.testVoice') }}</el-button>
+        <el-button @click="saveConfig">{{ $t('voiceConfig.saveConfig') }}</el-button>
+        <el-button text @click="resetConfig">{{ $t('voiceConfig.reset') }}</el-button>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, getCurrentInstance } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, getCurrentInstance } from 'vue'
+import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { DEFAULT_VOICE_CONFIG, isSpeechSynthesisSupported, loadVoiceConfig, saveVoiceConfig as persistVoiceConfig, speakText, stopSpeaking } from '../composables/useSpeechSynthesis.js'
 
@@ -70,8 +164,31 @@ const { proxy } = getCurrentInstance()
 const $t = proxy.$t
 const speechSupported = ref(isSpeechSynthesisSupported())
 const voices = ref([])
-const voiceFormRef = ref(null)
+const testing = ref(false)
+const backendStatus = ref({ openaiConfigured: false, azureConfigured: false })
+const proxyReachable = ref(false)
 const voiceConfig = reactive(loadVoiceConfig())
+const testText = ref($t('voiceConfig.testText'))
+const testSpeaker = ref('referee')
+
+const openAiVoices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse']
+const azureVoices = ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'zh-CN-YunjianNeural', 'zh-CN-XiaoyiNeural', 'en-US-JennyNeural', 'en-US-GuyNeural']
+const cloudVoiceOptions = computed(() => voiceConfig.cloud.provider === 'azure' ? azureVoices : openAiVoices)
+const audioFormats = computed(() => voiceConfig.cloud.provider === 'azure'
+  ? [{ label: 'MP3', value: 'mp3' }, { label: 'WAV', value: 'wav' }, { label: 'OGG', value: 'ogg' }]
+  : [{ label: 'MP3', value: 'mp3' }, { label: 'WAV', value: 'wav' }, { label: 'OPUS', value: 'opus' }])
+const isNativeAzure = computed(() => voiceConfig.cloud.provider === 'azure' && voiceConfig.cloud.apiBaseUrl.includes('tts.speech.microsoft.com'))
+const backendConfigured = computed(() => voiceConfig.cloud.provider === 'azure' ? backendStatus.value.azureConfigured : backendStatus.value.openaiConfigured)
+const engineReady = computed(() => voiceConfig.engine === 'cloud' ? proxyReachable.value : speechSupported.value)
+const canTest = computed(() => Boolean(testText.value.trim()) && (voiceConfig.engine === 'cloud' || speechSupported.value))
+const engineStatusText = computed(() => voiceConfig.engine === 'cloud'
+  ? (proxyReachable.value ? $t('voiceConfig.cloudReady') : $t('voiceConfig.cloudUnavailable'))
+  : (speechSupported.value ? $t('voiceConfig.supported') : $t('voiceConfig.unsupported')))
+const backendStatusText = computed(() => backendConfigured.value ? $t('voiceConfig.serverKeyReady') : $t('voiceConfig.serverKeyMissing'))
+const endpointPlaceholder = computed(() => voiceConfig.cloud.provider === 'azure'
+  ? 'https://eastasia.tts.speech.microsoft.com/cognitiveservices/v1'
+  : (voiceConfig.cloud.provider === 'custom' ? 'https://example.com/v1/audio/speech' : 'https://api.openai.com/v1/audio/speech'))
+const endpointHint = computed(() => voiceConfig.cloud.provider === 'azure' ? $t('voiceConfig.azureEndpointHint') : $t('voiceConfig.openAiEndpointHint'))
 
 const loadVoices = () => {
   if (!speechSupported.value) return
@@ -81,32 +198,109 @@ const loadVoices = () => {
     voiceConfig.voiceURI = preferred.voiceURI
   }
 }
+const loadCloudStatus = async () => {
+  try {
+    const response = await axios.get('/voice/status')
+    if (response.data?.code === 200) {
+      proxyReachable.value = true
+      Object.assign(backendStatus.value, response.data.data)
+    }
+  } catch {
+    proxyReachable.value = false
+    backendStatus.value = { openaiConfigured: false, azureConfigured: false }
+  }
+}
 const voiceLabel = voice => `${voice.name} (${voice.lang})`
-const saveConfig = () => { persistVoiceConfig(voiceConfig); ElMessage.success($t('voiceConfig.configSaved')) }
-const testVoice = () => { if (!speechSupported.value) return; persistVoiceConfig(voiceConfig); speakText($t('voiceConfig.testText'), { force: true }) }
-const resetConfig = () => { Object.assign(voiceConfig, DEFAULT_VOICE_CONFIG); loadVoices(); stopSpeaking() }
-onMounted(() => { loadVoices(); window.speechSynthesis?.addEventListener('voiceschanged', loadVoices) })
-onUnmounted(() => { window.speechSynthesis?.removeEventListener('voiceschanged', loadVoices); stopSpeaking() })
+const applyProviderDefaults = provider => {
+  if (!audioFormats.value.some(format => format.value === voiceConfig.cloud.responseFormat)) voiceConfig.cloud.responseFormat = 'mp3'
+  if (provider === 'azure') {
+    voiceConfig.cloud.playerVoice = 'zh-CN-YunxiNeural'
+    voiceConfig.cloud.refereeVoice = 'zh-CN-XiaoxiaoNeural'
+  } else if (!openAiVoices.includes(voiceConfig.cloud.playerVoice)) {
+    voiceConfig.cloud.playerVoice = 'alloy'
+    voiceConfig.cloud.refereeVoice = 'onyx'
+  }
+}
+const saveConfig = () => {
+  persistVoiceConfig(voiceConfig)
+  ElMessage.success($t('voiceConfig.configSaved'))
+}
+const testVoice = async () => {
+  stopSpeaking()
+  persistVoiceConfig(voiceConfig)
+  testing.value = true
+  try {
+    const played = await speakText(testText.value, {
+      force: true,
+      interrupt: true,
+      speaker: testSpeaker.value,
+      cloud: { ...voiceConfig.cloud },
+      engine: voiceConfig.engine,
+      voiceURI: voiceConfig.voiceURI,
+      refereeVoiceURI: voiceConfig.refereeVoiceURI,
+      rate: voiceConfig.rate,
+      pitch: voiceConfig.pitch,
+      volume: voiceConfig.volume,
+      onFallback: error => ElMessage.warning(`${$t('voiceConfig.fallbackUsed')}: ${error.message || $t('voiceConfig.playFailed')}`)
+    })
+    if (!played) throw new Error($t('voiceConfig.playFailed'))
+  } catch (error) {
+    ElMessage.error(`${$t('voiceConfig.testFailed')}: ${error.message || $t('voiceConfig.playFailed')}`)
+  } finally {
+    testing.value = false
+  }
+}
+const resetConfig = () => {
+  stopSpeaking()
+  Object.assign(voiceConfig, JSON.parse(JSON.stringify(DEFAULT_VOICE_CONFIG)))
+  loadVoices()
+  persistVoiceConfig(voiceConfig)
+}
+onMounted(() => {
+  loadVoices()
+  loadCloudStatus()
+  window.speechSynthesis?.addEventListener('voiceschanged', loadVoices)
+})
+onUnmounted(() => {
+  window.speechSynthesis?.removeEventListener('voiceschanged', loadVoices)
+  stopSpeaking()
+})
 </script>
 
 <style scoped>
-.voice-config { width: min(920px, 100%); margin: 0 auto; padding: 26px 0 82px; }
+.voice-config { width: min(980px, 100%); margin: 0 auto; padding: 26px 0 82px; }
 .voice-intro { display: flex; justify-content: space-between; align-items: end; gap: 24px; padding: 26px 0 36px; }
 .section-kicker, .card-kicker { color: #d9b55d; font: 700 10px/1 var(--font-heading); letter-spacing: .17em; }
-.voice-intro h2 { margin: 14px 0 12px; color: #edf4f8; font-size: clamp(32px, 4vw, 48px); letter-spacing: -.04em; }
-.voice-intro p { max-width: 620px; margin: 0; color: #9eafbe; font-size: 16px; line-height: 1.65; }
-.support-status { display: inline-flex; align-items: center; gap: 8px; color: #c38b8b; font: 700 11px/1 var(--font-heading); letter-spacing: .08em; white-space: nowrap; }
+.voice-intro h2 { margin: 14px 0 12px; color: #edf4f8; font-size: clamp(32px, 4vw, 48px); letter-spacing: 0; }
+.voice-intro p { max-width: 660px; margin: 0; color: #9eafbe; font-size: 16px; line-height: 1.65; }
+.support-status, .cloud-status { display: inline-flex; align-items: center; gap: 8px; color: #c38b8b; font: 700 11px/1 var(--font-heading); white-space: nowrap; }
 .support-status i { width: 7px; height: 7px; border-radius: 50%; background: #c38b8b; }
-.support-status.supported { color: #9bd09f; }.support-status.supported i { background: #9bd09f; }
+.support-status.supported, .cloud-status.configured { color: #9bd09f; }
+.support-status.supported i { background: #9bd09f; }
 .config-card, .cloud-card { border-color: rgba(180, 204, 222, .18) !important; background: linear-gradient(155deg, #101d2a, #0b141f) !important; }
 .cloud-card { margin-top: 18px; }
 .config-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-.config-header h3 { margin: 8px 0 0; color: #eff5fa; font-size: 21px; }
-.coming-soon { color: #d9b55d; font: 700 10px/1 var(--font-heading); letter-spacing: .12em; }
-.voice-note { margin-bottom: 22px; }
-.field-hint, .cloud-card p { display: block; margin: 8px 0 0; color: #8294a3; font-size: 12px; line-height: 1.6; }
-.control-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.config-header h3 { margin: 8px 0 0; color: #eff5fa; font-size: 21px; letter-spacing: 0; }
+.voice-note { margin: 18px 0 22px; }
+.field-grid, .switch-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.switch-grid { margin: 8px 0 20px; }
+.switch-item { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 14px 16px; border: 1px solid rgba(180, 204, 222, .15); border-radius: 6px; background: rgba(5, 12, 19, .34); }
+.switch-item strong, .switch-item span { display: block; }
+.switch-item strong { color: #e5edf3; font-size: 13px; }
+.switch-item span, .field-hint { margin-top: 5px; color: #8294a3; font-size: 12px; line-height: 1.5; }
+.control-grid, .cloud-control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 10px; }
 .slider-line { display: flex; align-items: center; gap: 12px; }
-.slider-line :deep(.el-slider) { flex: 1; }.slider-line > span { min-width: 46px; color: #e4bd65; font-weight: 700; text-align: right; }
-@media (max-width: 700px) { .voice-intro { display: block; }.support-status { margin-top: 18px; }.control-grid { grid-template-columns: 1fr; gap: 0; } }
+.slider-line :deep(.el-slider) { flex: 1; }
+.slider-line > span { min-width: 46px; color: #e4bd65; font-weight: 700; text-align: right; }
+.test-panel { display: flex; justify-content: space-between; align-items: end; gap: 22px; margin-top: 18px; padding: 20px; border-top: 1px solid rgba(180, 204, 222, .18); border-bottom: 1px solid rgba(180, 204, 222, .18); background: rgba(8, 17, 26, .68); }
+.test-copy { flex: 1; min-width: 0; }
+.test-copy strong { display: block; margin-bottom: 10px; color: #e9f0f5; }
+.test-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+@media (max-width: 760px) {
+  .voice-intro { display: block; }
+  .support-status { margin-top: 18px; }
+  .field-grid, .switch-grid, .control-grid, .cloud-control-grid { grid-template-columns: 1fr; gap: 4px; }
+  .test-panel { display: block; }
+  .test-actions { margin-top: 14px; }
+}
 </style>

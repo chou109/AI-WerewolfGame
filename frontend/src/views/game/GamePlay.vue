@@ -680,10 +680,18 @@ const addGameMessage = ({ sender, content, type = 'player', visibility = 'public
   dialogMessages.value.push({ sender, content, time: new Date().toLocaleTimeString(), type, visibility, privateFor, detail })
   scrollToBottom()
 }
-const addRefereeMessage = (content, options = {}) => addGameMessage({
-  sender: $t('gamePlay.referee'), content, type: 'referee', visibility: options.visibility || 'public',
-  privateFor: options.privateFor || null, detail: options.detail || ''
-})
+const addRefereeMessage = (content, options = {}) => {
+  const visibility = options.visibility || 'public'
+  addGameMessage({
+    sender: $t('gamePlay.referee'), content, type: 'referee', visibility,
+    privateFor: options.privateFor || null, detail: options.detail || ''
+  })
+  if (visibility === 'public' && options.voice !== false) {
+    void speakText(content, { speaker: 'referee', lang: currentLocale() }).catch(error => {
+      console.warn('Referee speech failed:', error)
+    })
+  }
+}
 const addDialogMessage = (sender, content, type = 'player', options = {}) => addGameMessage({
   sender, content, type, visibility: options.visibility || 'public', privateFor: options.privateFor || null, detail: options.detail || ''
 })
@@ -760,7 +768,7 @@ const startSpeechTimer = () => {
 }
 const closeSpeech = (reason = 'pass') => {
   skipToEnd()
-  stopSpeaking()
+  stopSpeaking({ clearQueue: false })
   if (activeSpeechTimer) clearInterval(activeSpeechTimer)
   activeSpeechTimer = null
   speechPaused.value = false
@@ -777,7 +785,7 @@ const closeSpeech = (reason = 'pass') => {
 }
 const skipTypewriter = () => {
   skipToEnd()
-  stopSpeaking()
+  stopSpeaking({ clearQueue: false })
   speechPaused.value = false
 }
 const passSpeech = () => {
@@ -1833,7 +1841,9 @@ const presentSpeech = (player, speech, thinking, language) => new Promise(resolv
   if (activeSpeechResolver) closeSpeech()
   aiSpeakingContent.value = { playerId: player.id, playerName: `${player.playerNumber}号 ${player.playerName}`, content: speech, thinking }
   startTypewriter(speech, { speed: SPEEDS[typewriterSpeed.value] || 50 })
-  speakText(speech, { lang: language })
+  void speakText(speech, { lang: language, speaker: 'player' }).catch(error => {
+    console.warn('Player speech failed:', error)
+  })
   activeSpeechResolver = resolve
   startSpeechTimer()
 })

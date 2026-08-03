@@ -85,3 +85,13 @@ logging:
     com.werewolf.game: debug
   file:
     name: logs/werewolf-game.log
+
+# 云端语音代理配置。建议通过环境变量注入密钥，不要把真实密钥提交到仓库。
+voice:
+  cloud:
+    openai:
+      api-key: ${VOICE_OPENAI_API_KEY:}
+      base-url: ${VOICE_OPENAI_BASE_URL:https://api.openai.com/v1/audio/speech}
+    azure:
+      api-key: ${VOICE_AZURE_API_KEY:}
+      base-url: ${VOICE_AZURE_BASE_URL:}
