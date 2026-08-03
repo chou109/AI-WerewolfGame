@@ -121,7 +121,7 @@
 
         <div class="cloud-control-grid">
           <el-form-item :label="$t('voiceConfig.cloudSpeed')">
-            <el-input-number v-model="voiceConfig.cloud.speed" :min="0.25" :max="4" :step="0.1" :precision="1" />
+            <div class="slider-line cloud-slider"><el-slider v-model="voiceConfig.cloud.speed" :min="0.25" :max="4" :step="0.1" /><span>{{ voiceConfig.cloud.speed.toFixed(1) }}x</span></div>
           </el-form-item>
           <el-form-item :label="$t('voiceConfig.audioFormat')">
             <el-select v-model="voiceConfig.cloud.responseFormat" style="width: 100%">
@@ -289,9 +289,15 @@ onUnmounted(() => {
 .switch-item strong { color: #e5edf3; font-size: 13px; }
 .switch-item span, .field-hint { margin-top: 5px; color: #8294a3; font-size: 12px; line-height: 1.5; }
 .control-grid, .cloud-control-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 10px; }
-.slider-line { display: flex; align-items: center; gap: 12px; }
-.slider-line :deep(.el-slider) { flex: 1; }
+.slider-line { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; }
+.slider-line :deep(.el-slider) { flex: 1; min-width: 120px; }
+.slider-line :deep(.el-slider__runway) { height: 7px; background: #344653; border-radius: 4px; }
+.slider-line :deep(.el-slider__bar) { height: 7px; background: #d9b55d !important; border-radius: 4px; }
+.slider-line :deep(.el-slider__button) { width: 17px; height: 17px; border: 2px solid #d9b55d !important; background: #f2e1b4; }
+.slider-line :deep(.el-slider.is-disabled .el-slider__runway) { background: #283640; }
+.slider-line :deep(.el-slider.is-disabled .el-slider__bar) { background: #687782 !important; }
 .slider-line > span { min-width: 46px; color: #e4bd65; font-weight: 700; text-align: right; }
+.cloud-slider { min-width: 220px; }
 .test-panel { display: flex; justify-content: space-between; align-items: end; gap: 22px; margin-top: 18px; padding: 20px; border-top: 1px solid rgba(180, 204, 222, .18); border-bottom: 1px solid rgba(180, 204, 222, .18); background: rgba(8, 17, 26, .68); }
 .test-copy { flex: 1; min-width: 0; }
 .test-copy strong { display: block; margin-bottom: 10px; color: #e9f0f5; }

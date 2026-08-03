@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS `ai_player` (
   `personality` varchar(255) DEFAULT NULL COMMENT '个性',
   `strategy` varchar(255) DEFAULT NULL COMMENT '策略',
   `language` varchar(10) NOT NULL DEFAULT 'zh-CN' COMMENT '对局发言语言',
+  `avatar_url` longtext DEFAULT NULL COMMENT 'AI玩家头像Data URL',
   `api_key` varchar(255) NOT NULL COMMENT 'API Key',
   `api_base_url` varchar(255) DEFAULT NULL COMMENT 'API Base URL',
   `temperature` int(11) DEFAULT '7' COMMENT '温度',

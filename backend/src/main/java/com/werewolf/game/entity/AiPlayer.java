@@ -31,6 +31,8 @@ public class AiPlayer implements Serializable {
 
     private String language;
 
+    private String avatarUrl;
+
     private String apiKey;
 
     private String apiBaseUrl;

@@ -45,6 +45,14 @@
         </div>
       </template>
       <el-table :data="aiPlayers" class="player-table" table-layout="fixed" style="width: 100%">
+        <el-table-column :label="$locale === 'zh-CN' ? '头像' : 'Avatar'" width="74" align="center">
+          <template #default="scope">
+            <div class="table-avatar">
+              <img v-if="scope.row.avatarUrl" :src="scope.row.avatarUrl" :alt="scope.row.name" />
+              <span v-else>{{ avatarPlaceholder(scope.row.name) }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="name" :label="$t('aiPlayer.name')" width="142" show-overflow-tooltip />
         <el-table-column prop="modelType" :label="$t('aiPlayer.modelType')" width="118" show-overflow-tooltip />
         <el-table-column prop="modelName" :label="$t('aiPlayer.modelName')" min-width="170" show-overflow-tooltip />
@@ -85,6 +93,21 @@
 
         <el-form-item :label="$t('aiPlayer.name')" prop="name">
           <el-input v-model="aiPlayerForm.name" :placeholder="$t('aiPlayer.nameRequired')" />
+        </el-form-item>
+
+        <el-form-item :label="$locale === 'zh-CN' ? '玩家头像' : 'Player avatar'">
+          <div class="avatar-editor">
+            <button type="button" class="avatar-preview" @click="avatarInputRef?.click()">
+              <img v-if="aiPlayerForm.avatarUrl" :src="aiPlayerForm.avatarUrl" :alt="aiPlayerForm.name" />
+              <span v-else>{{ avatarPlaceholder(aiPlayerForm.name) }}</span>
+            </button>
+            <div class="avatar-actions">
+              <input ref="avatarInputRef" class="avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp" @change="handleAvatarUpload" />
+              <el-button @click="avatarInputRef?.click()">{{ $locale === 'zh-CN' ? '上传头像' : 'Upload' }}</el-button>
+              <el-button v-if="aiPlayerForm.avatarUrl" text @click="aiPlayerForm.avatarUrl = ''">{{ $locale === 'zh-CN' ? '移除' : 'Remove' }}</el-button>
+              <span class="field-hint">{{ $locale === 'zh-CN' ? '支持 PNG、JPG、WebP，保存前自动压缩。' : 'PNG, JPG or WebP; compressed before saving.' }}</span>
+            </div>
+          </div>
         </el-form-item>
 
         <el-form-item :label="$t('aiPlayer.apiKey')" prop="apiKey">
@@ -206,6 +229,7 @@ const dialogVisible = ref(false)
 const dialogTitle = ref($t('aiPlayer.create'))
 const loading = ref(false)
 const aiPlayerFormRef = ref(null)
+const avatarInputRef = ref(null)
 const modelList = ref([])
 const modelTypes = ref([])
 const fetchingModels = ref(false)
@@ -242,6 +266,46 @@ const speechLanguageOptions = computed(() => [
   { label: 'English', value: 'en-US' }
 ])
 
+const avatarPlaceholder = name => String(name || 'AI').trim().slice(0, 2).toUpperCase() || 'AI'
+
+const compressAvatar = file => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onerror = () => reject(new Error('read_failed'))
+  reader.onload = () => {
+    const image = new Image()
+    image.onerror = () => reject(new Error('invalid_image'))
+    image.onload = () => {
+      const maxSide = 512
+      const scale = Math.min(1, maxSide / Math.max(image.width, image.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(image.width * scale))
+      canvas.height = Math.max(1, Math.round(image.height * scale))
+      const context = canvas.getContext('2d')
+      context.fillStyle = '#101820'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', 0.84))
+    }
+    image.src = reader.result
+  }
+  reader.readAsDataURL(file)
+})
+
+const handleAvatarUpload = async event => {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  if (!file.type.startsWith('image/') || file.size > 5 * 1024 * 1024) {
+    ElMessage.warning($locale === 'zh-CN' ? '请选择不超过 5MB 的图片文件。' : 'Choose an image smaller than 5 MB.')
+    return
+  }
+  try {
+    aiPlayerForm.avatarUrl = await compressAvatar(file)
+  } catch {
+    ElMessage.error($locale === 'zh-CN' ? '头像读取失败，请更换图片。' : 'Could not read this image.')
+  }
+}
+
 // Global defaults
 const globalDefaults = reactive({
   apiKey: localStorage.getItem('globalApiKey') || '',
@@ -258,6 +322,7 @@ const aiPlayerForm = reactive({
   personality: '',
   strategy: '',
   language: 'zh-CN',
+  avatarUrl: '',
   temperature: 0.7,
   maxTokens: 1000,
   status: 1
@@ -378,6 +443,7 @@ const openCreateDialog = () => {
 }
 
 const editAiPlayer = (aiPlayer) => {
+  resetForm()
   Object.assign(aiPlayerForm, aiPlayer)
   dialogTitle.value = $t('aiPlayer.edit')
   dialogVisible.value = true
@@ -387,7 +453,7 @@ const resetForm = () => {
   Object.assign(aiPlayerForm, {
     id: null, name: '', modelType: '', modelName: '',
     apiKey: globalDefaults.apiKey || '', apiBaseUrl: globalDefaults.apiBaseUrl || '',
-    personality: '', strategy: '', language: 'zh-CN', temperature: 0.7, maxTokens: 1000, status: 1
+    personality: '', strategy: '', language: 'zh-CN', avatarUrl: '', temperature: 0.7, maxTokens: 1000, status: 1
   })
   modelList.value = []
   modelTypes.value = []
@@ -558,6 +624,18 @@ const fetchModelList = async () => {
 .player-table :deep(.cell) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d7e1e9; font-size: 14px; }
 .player-table :deep(.el-table__header .cell) { color: #dcb861; font: 700 10px/1 var(--font-heading); letter-spacing: .09em; }
 .player-table :deep(.el-table__fixed-right) { box-shadow: -8px 0 16px rgba(3, 9, 14, .22); }
+.table-avatar, .avatar-preview {
+  display: inline-flex; align-items: center; justify-content: center; overflow: hidden;
+  width: 42px; height: 42px; border: 1px solid rgba(217, 181, 93, .38); border-radius: 50%;
+  background: #17232d; color: #e5c574; font: 700 11px/1 var(--font-heading);
+}
+.table-avatar img, .avatar-preview img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-editor { display: flex; align-items: center; gap: 16px; width: 100%; }
+.avatar-preview { width: 82px; height: 82px; flex: 0 0 82px; padding: 0; cursor: pointer; }
+.avatar-preview span { font-size: 18px; }
+.avatar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.avatar-actions .field-hint { width: 100%; margin-top: 0; }
+.avatar-file-input { display: none; }
 .availability { display: inline-flex; align-items: center; gap: 6px; color: #a8d8a2; font: 700 10px/1 var(--font-heading); letter-spacing: .06em; }
 .availability i { width: 6px; height: 6px; border-radius: 50%; background: #90d69a; box-shadow: 0 0 0 3px rgba(144, 214, 154, .1); }
 .availability.offline { color: #b98484; }.availability.offline i { background: #bc7878; }
@@ -570,6 +648,9 @@ const fetchModelList = async () => {
 .tag-field :deep(.el-tag) { border-color: rgba(217, 181, 93, .36); background: rgba(217, 181, 93, .12); color: #f0cf7b; }
 .field-hint { display: block; margin-top: 7px; color: #8294a3; font-size: 12px; line-height: 1.5; }
 .temperature-control { display: flex; align-items: center; gap: 12px; width: 100%; }
+.temperature-control :deep(.el-slider__runway) { min-width: 180px; height: 6px; background: #344653; }
+.temperature-control :deep(.el-slider__bar) { height: 6px; background: #d9b55d !important; }
+.temperature-control :deep(.el-slider__button) { width: 16px; height: 16px; background: #f3dfaa; }
 .dialog-footer { display: flex; justify-content: flex-end; }
 
 @media (max-width: 850px) { .manager-intro { display: block; }.create-player-button { margin-top: 24px; }.defaults-form { grid-template-columns: 1fr; }.defaults-action { justify-self: start; } }

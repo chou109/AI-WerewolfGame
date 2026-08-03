@@ -1,5 +1,5 @@
 <template>
-  <el-container>
+  <el-container :class="{ 'game-shell': isGamePlay }">
     <el-header>
       <div class="header-content">
         <div class="logo" @click="$router.push('/')">
@@ -42,15 +42,15 @@
         </div>
       </div>
     </el-header>
-    <el-main :class="{ 'home-main': route.path === '/' }">
-      <el-breadcrumb v-if="route.path !== '/'" class="breadcrumb" separator="·">
+    <el-main :class="{ 'home-main': route.path === '/', 'game-main': isGamePlay }">
+      <el-breadcrumb v-if="route.path !== '/' && !isGamePlay" class="breadcrumb" separator="·">
         <el-breadcrumb-item v-for="item in breadcrumbItems" :key="item.path" :to="item.path">
           {{ item.title }}
         </el-breadcrumb-item>
       </el-breadcrumb>
       <router-view />
     </el-main>
-    <el-footer>
+    <el-footer v-if="!isGamePlay">
       <div class="footer-content">
         <div class="footer-ornament">✦</div>
         <p>{{ $t('home.copyright') }}</p>
@@ -74,6 +74,7 @@ const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 const activeIndex = ref('home')
+const isGamePlay = computed(() => route.path.includes('/game/play/'))
 
 const breadcrumbItems = computed(() => {
   const path = route.path
@@ -193,6 +194,8 @@ const toggleLang = () => { $toggleLocale(); location.reload() }
 
 .breadcrumb { margin-bottom: 20px; }
 :deep(.home-main) { padding: 0 !important; overflow: hidden; }
+.game-shell { height: 100vh; min-height: 100vh; overflow: hidden; }
+.game-main { height: calc(100vh - 60px); padding: 0 !important; overflow: hidden; }
 
 .footer-content { text-align: center; padding: 10px 0; }
 .footer-content p { margin: 4px 0; color: var(--text-muted); font-size: 0.85rem; }
