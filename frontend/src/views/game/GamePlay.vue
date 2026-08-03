@@ -1204,12 +1204,12 @@ const buildDecisionPrompts = (player, action, extra, config) => {
     instruction = `使用${ability}选择一名目标；狼美人不可连续两夜魅惑同一人。可选：${extra.candidates}。JSON：{"thinking":"私密技能策略","target":玩家编号}`
   } else if (action === 'sheriffCampaign') {
     instruction = language === 'en-US'
-      ? `Decide whether to run for sheriff and choose clockwise or counterclockwise speaking order if elected. The real Seer normally runs. A Villager normally stays below unless there is a clear tactical claim followed by withdrawal. The wolf pack should send only a small number of claimants so other wolves retain votes. JSON: {"thinking":"private campaign plan","run":boolean,"direction":"clockwise|counterclockwise","tacticalReason":"reason or empty"}`
-      : `决定是否上警，并选择当选后希望采用顺时针或逆时针发言。真预言家必须上警；平民通常不应抢警徽，除非有清晰且可公开解释的诈身份战术并会在发言后退水；狼队最多安排少量成员悍跳，其余狼人应留在警下投票。JSON：{"thinking":"私密竞选策略","run":true或false,"direction":"clockwise或counterclockwise","tacticalReason":"上警理由或空字符串"}`
+      ? `Decide freely whether to run for sheriff and choose clockwise or counterclockwise speaking order if elected. Common strategy is for the real Seer to run, for Villagers to weigh the value and risk of running, and for wolves to coordinate claimants and below-line votes, but none of these are enforced restrictions. Any role may run, multiple wolves may run, and your choice must follow your own identity, personality, and plan. JSON: {"thinking":"private campaign plan","run":boolean,"direction":"clockwise|counterclockwise","tacticalReason":"reason or empty"}`
+      : `根据自己的身份、人设和策略自由决定是否上警，并选择当选后希望采用顺时针或逆时针发言。常见惯例是真预言家上警、平民谨慎评估上警收益、狼队协调悍跳与警下票，但这些都不是系统限制：任何身份都可以上警，狼队也可以多人上警。JSON：{"thinking":"私密竞选策略","run":true或false,"direction":"clockwise或counterclockwise","tacticalReason":"上警理由或空字符串"}`
   } else if (action === 'sheriffWithdraw') {
     instruction = language === 'en-US'
-      ? `After all campaign speeches, decide whether to withdraw. A real Seer normally stays; a villager or tactical claimant normally withdraws unless openly contesting a role. JSON: {"thinking":"private withdrawal reasoning","withdraw":boolean}`
-      : `所有警上发言结束，现在决定是否退水。真预言家通常不退水；没有明确跳神职的平民或诈身份玩家应当退水并恢复警徽投票权；悍跳狼若要继续争夺警徽则不退水。JSON：{"thinking":"私密退水判断","withdraw":true或false}`
+      ? `After all campaign speeches, decide freely whether to withdraw. A real Seer commonly stays and a tactical claimant often withdraws, but these are strategic conventions rather than enforced rules. You may stay even without publicly claiming a power role. JSON: {"thinking":"private withdrawal reasoning","withdraw":boolean}`
+      : `所有警上发言结束，现在根据自己的策略自由决定是否退水。真预言家通常不退水、诈身份玩家常选择退水，但这只是常见打法而非系统限制；即使没有公开跳神职，也可以选择继续竞选。JSON：{"thinking":"私密退水判断","withdraw":true或false}`
   } else if (action === 'sheriffVote') {
     instruction = language === 'en-US'
       ? `You are below the sheriff line and must vote for one remaining candidate. Candidates cannot vote. Candidates: ${extra.candidates}. JSON: {"thinking":"private sheriff read","target":number}`
@@ -1960,7 +1960,7 @@ const contextualFallbackSpeech = (player, language, action = 'speech') => {
     if (hasRole(player, 'seer')) {
       return `我上警竞选警长，我是预言家。${latestCheck ? `昨夜查验${getPlayerNumberById(latestCheck.targetId)}号，结果是${latestCheck.result === '狼人' ? '查杀' : '金水'}。` : '首夜查验信息会在拿到结果后完整报出。'}我会把警徽流留在两个需要重点观察的位置，警下请根据验人、发言逻辑和对跳关系投票，不要只听语气站边。如果有对跳预言家，我会逐项核对其验人理由、警徽流和狼坑是否完整。`
     }
-    return `我选择上警，是为了把自己的判断放到警上接受全场检验。我目前关注${suspect?.playerNumber || '?'}号和${second?.playerNumber || '?'}号，重点会看他们是否给出具体身份声明、验人信息和完整警徽流；没有跳神职却只靠强势语气抢警徽，不符合好人收益。听完其他候选人的发言后，我会在退水环节明确表态。`
+    return `我选择上警，是为了把自己的判断放到警上接受全场检验。我目前关注${suspect?.playerNumber || '?'}号和${second?.playerNumber || '?'}号，重点会看他们是否给出具体身份声明、验人信息、上警收益和完整警徽流。是否退水要结合对跳关系、警下票型和后续发言判断，我会在退水环节明确表态。`
   }
   if (language === 'en-US') {
     const englishNightReport = nightState.deaths.length
@@ -2136,22 +2136,10 @@ const runSheriffElection = async version => {
   addRefereeMessage('第一天天亮后进入警长竞选：先上警，再随机发言，随后退水，最后只由警下玩家投票。警上未退水者没有警徽投票权。')
   const campaignPlans = new Map()
   const candidates = []
-  const packWolfNumbers = alivePlayers.value.filter(isPackWolf).sort((a, b) => a.playerNumber - b.playerNumber)
-  let wolfCandidateCount = 0
   for (const player of [...alivePlayers.value]) {
     const decision = await requestPlayerDecision(player, 'sheriffCampaign')
     recordPrivateThinking(player, decision.thinking, '警长竞选')
-    let run = hasRole(player, 'seer')
-      ? true
-      : ['平民', 'Villager'].includes(player.role)
-        ? false
-        : decision.run === undefined
-          ? (isPackWolf(player) && packWolfNumbers[0]?.id === player.id)
-          : Boolean(decision.run)
-    if (run && isPackWolf(player)) {
-      if (wolfCandidateCount >= 1) run = false
-      else wolfCandidateCount++
-    }
+    const run = decision.run === undefined ? hasRole(player, 'seer') : Boolean(decision.run)
     if (run) {
       player.isSheriffCandidate = true
       candidates.push(player)
@@ -2178,16 +2166,9 @@ const runSheriffElection = async version => {
   for (const player of candidates) {
     const decision = await requestPlayerDecision(player, 'sheriffWithdraw')
     recordPrivateThinking(player, decision.thinking, '警长退水')
-    const claimedSeer = publicRoleClaims[player.id] === '预言家'
-    const withdraw = hasRole(player, 'seer')
-      ? false
-      : ['平民', 'Villager'].includes(player.role)
-        ? true
-        : !claimedSeer && publicRoleClaims[player.id] !== '奇迹商人'
-          ? true
-          : decision.withdraw === undefined ? false : Boolean(decision.withdraw)
+    const withdraw = decision.withdraw === undefined ? false : Boolean(decision.withdraw)
     if (withdraw) {
-      player.isSheriffCandidate = true
+      player.isSheriffCandidate = false
       addRefereeMessage(`${player.playerNumber}号退水，恢复警徽投票权。`)
     } else {
       finalCandidates.push(player)
