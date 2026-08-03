@@ -28,4 +28,8 @@ public interface GameRecordService extends IService<GameRecord> {
      * 获取房间的最新游戏记录
      */
     GameRecord getLatestRecordByRoomId(Long roomId);
+
+    List<GameRecord> getFinishedGames();
+
+    boolean finishGame(GameRecord record, String winner);
 }

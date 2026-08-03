@@ -41,7 +41,12 @@
             <span class="card-kicker">ACTIVE ROSTER</span>
             <h3>{{ $t('aiPlayer.listTitle') }}</h3>
           </div>
-          <span class="roster-count">{{ aiPlayers.length }} {{ $locale === 'zh-CN' ? '位玩家' : 'PLAYERS' }}</span>
+          <div class="roster-header-actions">
+            <el-button :loading="testingAllConnections" @click="testAllConnections">
+              {{ testingAllConnections ? ($locale === 'zh-CN' ? '正在测试全部玩家' : 'Testing all') : ($locale === 'zh-CN' ? '一键全部测试' : 'Test all') }}
+            </el-button>
+            <span class="roster-count">{{ aiPlayers.length }} {{ $locale === 'zh-CN' ? '位玩家' : 'PLAYERS' }}</span>
+          </div>
         </div>
       </template>
       <el-table :data="aiPlayers" class="player-table" table-layout="fixed" style="width: 100%">
@@ -61,6 +66,14 @@
         </el-table-column>
         <el-table-column prop="personality" :label="$t('aiPlayer.personality')" min-width="154" show-overflow-tooltip />
         <el-table-column prop="strategy" :label="$t('aiPlayer.strategy')" min-width="220" show-overflow-tooltip />
+        <el-table-column :label="$locale === 'zh-CN' ? '连通状态' : 'Connection'" width="108" align="center" fixed="right">
+          <template #default="scope">
+            <el-tag v-if="connectionResults[scope.row.id] === 'success'" type="success" size="small">{{ $locale === 'zh-CN' ? '正常' : 'Online' }}</el-tag>
+            <el-tag v-else-if="connectionResults[scope.row.id] === 'failed'" type="danger" size="small">{{ $locale === 'zh-CN' ? '失败' : 'Failed' }}</el-tag>
+            <el-tag v-else-if="connectionResults[scope.row.id] === 'testing'" type="warning" size="small">{{ $locale === 'zh-CN' ? '测试中' : 'Testing' }}</el-tag>
+            <span v-else class="connection-untested">{{ $locale === 'zh-CN' ? '未测试' : 'Untested' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column :label="$t('aiPlayer.status')" width="88">
           <template #default="scope">
             <span class="availability" :class="{ offline: scope.row.status !== 1 }"><i></i>{{ scope.row.status === 1 ? $t('common.enabled') : $t('common.disabled') }}</span>
@@ -285,6 +298,8 @@ const modelTypes = ref([])
 const fetchingModels = ref(false)
 const testingConnection = ref(false)
 const connectionStatus = ref('') // '', 'success', 'failed'
+const testingAllConnections = ref(false)
+const connectionResults = reactive({})
 const selectedPreset = ref('')
 const voiceDialogVisible = ref(false)
 const voicePlayer = ref(null)
@@ -579,6 +594,16 @@ watch(() => aiPlayerForm.modelType, (newType) => {
   else if (newType === 'anthropic' || newType === 'claude') aiPlayerForm.apiBaseUrl = 'https://api.anthropic.com/v1'
 })
 
+const requestProviderModels = async config => {
+  let apiUrl = String(config.apiBaseUrl || '').trim()
+  if (!apiUrl.startsWith('http')) apiUrl = 'https://' + apiUrl
+  if (!apiUrl.endsWith('/')) apiUrl += '/'
+  return axios.get(`${apiUrl}models`, {
+    headers: { Authorization: `Bearer ${String(config.apiKey || '').replace(/`/g, '').trim()}` },
+    timeout: 10000
+  })
+}
+
 const testConnection = async () => {
   if (!aiPlayerForm.apiKey) {
     ElMessage.warning($t('aiPlayer.needApiKey'))
@@ -593,14 +618,7 @@ const testConnection = async () => {
   connectionStatus.value = ''
 
   try {
-    let apiUrl = aiPlayerForm.apiBaseUrl.trim()
-    if (!apiUrl.startsWith('http')) apiUrl = 'https://' + apiUrl
-    if (!apiUrl.endsWith('/')) apiUrl += '/'
-
-    const response = await axios.get(`${apiUrl}models`, {
-      headers: { 'Authorization': `Bearer ${aiPlayerForm.apiKey}` },
-      timeout: 10000
-    })
+    const response = await requestProviderModels(aiPlayerForm)
 
     if (response.data) {
       connectionStatus.value = 'success'
@@ -615,6 +633,35 @@ const testConnection = async () => {
   } finally {
     testingConnection.value = false
   }
+}
+
+const testAllConnections = async () => {
+  if (!aiPlayers.value.length || testingAllConnections.value) return
+  testingAllConnections.value = true
+  aiPlayers.value.forEach(player => { connectionResults[player.id] = 'testing' })
+  const results = await Promise.all(aiPlayers.value.map(async player => {
+    if (!player.apiKey || !player.apiBaseUrl) {
+      connectionResults[player.id] = 'failed'
+      return false
+    }
+    try {
+      const response = await requestProviderModels(player)
+      const success = Boolean(response.data)
+      connectionResults[player.id] = success ? 'success' : 'failed'
+      return success
+    } catch {
+      connectionResults[player.id] = 'failed'
+      return false
+    }
+  }))
+  const successCount = results.filter(Boolean).length
+  const failedCount = results.length - successCount
+  testingAllConnections.value = false
+  const summary = $locale === 'zh-CN'
+    ? `全部测试完成：${successCount} 个正常，${failedCount} 个失败`
+    : `Connection test complete: ${successCount} online, ${failedCount} failed`
+  if (failedCount) ElMessage.warning(summary)
+  else ElMessage.success(summary)
 }
 
 const saveAiPlayer = async () => {
@@ -723,6 +770,8 @@ const fetchModelList = async () => {
 .card-status, .roster-count { display: inline-flex; align-items: center; gap: 7px; color: #aab9c6; font: 700 10px/1 var(--font-heading); letter-spacing: .1em; }
 .card-status i { width: 6px; height: 6px; border-radius: 50%; background: #98d59e; box-shadow: 0 0 0 4px rgba(152, 213, 158, .1); }
 .roster-count { padding: 7px 9px; border: 1px solid rgba(190, 209, 224, .17); border-radius: 4px; color: #d3dce5; }
+.roster-header-actions { display:flex; align-items:center; gap:10px; }
+.connection-untested { color:#7f91a0; font-size:12px; }
 
 .defaults-form { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.3fr) auto; gap: 16px; align-items: end; }
 .defaults-form :deep(.el-form-item) { margin: 0; }

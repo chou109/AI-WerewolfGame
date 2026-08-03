@@ -4,7 +4,11 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.werewolf.game.entity.GameRecord;
 import com.werewolf.game.mapper.GameRecordMapper;
 import com.werewolf.game.service.GameRecordService;
+import com.werewolf.game.service.GameRoomService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -14,6 +18,12 @@ import java.util.List;
  */
 @Service
 public class GameRecordServiceImpl extends ServiceImpl<GameRecordMapper, GameRecord> implements GameRecordService {
+
+    @Autowired
+    private GameRoomService gameRoomService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Override
     public List<GameRecord> getRecordsByRoomId(Long roomId) {
@@ -44,6 +54,35 @@ public class GameRecordServiceImpl extends ServiceImpl<GameRecordMapper, GameRec
         return lambdaQuery()
                 .eq(GameRecord::getRoomId, roomId)
                 .orderByDesc(GameRecord::getCreateTime)
+                .last("LIMIT 1")
                 .one();
+    }
+
+    @Override
+    public List<GameRecord> getFinishedGames() {
+        return lambdaQuery()
+                .eq(GameRecord::getActionType, "game_end")
+                .orderByDesc(GameRecord::getCreateTime)
+                .list();
+    }
+
+    @Override
+    @Transactional
+    public synchronized boolean finishGame(GameRecord record, String winner) {
+        boolean roomEnded = gameRoomService.endGame(record.getRoomId(), winner);
+        long existing = lambdaQuery()
+                .eq(GameRecord::getRoomId, record.getRoomId())
+                .eq(GameRecord::getActionType, "game_end")
+                .count();
+        boolean recorded = existing > 0;
+        if (!recorded) {
+            record.setActionType("game_end");
+            record.setPhase("finished");
+            record.setTargetPlayer(winner);
+            record.setCreateTime(LocalDateTime.now());
+            recorded = save(record);
+        }
+        jdbcTemplate.update("DELETE FROM game_state_snapshot WHERE room_id = ?", record.getRoomId());
+        return roomEnded || recorded;
     }
 }

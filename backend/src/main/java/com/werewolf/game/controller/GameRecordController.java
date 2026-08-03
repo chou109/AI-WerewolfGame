@@ -49,6 +49,26 @@ public class GameRecordController {
         }
     }
 
+    @GetMapping("/finished")
+    public Map<String, Object> getFinishedGames() {
+        return Map.of("code", 200, "data", gameRecordService.getFinishedGames());
+    }
+
+    @PostMapping("/finish")
+    public Map<String, Object> finishGame(@RequestBody Map<String, Object> params) {
+        GameRecord record = new GameRecord();
+        record.setRoomId(Long.parseLong(params.get("roomId").toString()));
+        record.setDayNumber(Integer.parseInt(params.getOrDefault("dayNumber", 1).toString()));
+        record.setPhase(params.getOrDefault("phase", "finished").toString());
+        record.setActionType("game_end");
+        record.setActionContent(params.getOrDefault("actionContent", "").toString());
+        String winner = params.getOrDefault("winner", "未知").toString();
+        boolean result = gameRecordService.finishGame(record, winner);
+        return result
+                ? Map.of("code", 200, "message", "游戏结算已记录")
+                : Map.of("code", 400, "message", "游戏结算记录失败");
+    }
+
     /**
      * 获取房间最新记录
      */

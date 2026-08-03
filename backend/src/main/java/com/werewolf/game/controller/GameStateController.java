@@ -26,7 +26,7 @@ public class GameStateController {
     @GetMapping("/{roomId}")
     public Map<String, Object> getState(@PathVariable Long roomId) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                "SELECT state_json, update_time FROM game_state_snapshot WHERE room_id = ?",
+                "SELECT state_json, saved_at, update_time FROM game_state_snapshot WHERE room_id = ?",
                 roomId
         );
         if (rows.isEmpty()) {
@@ -37,6 +37,7 @@ public class GameStateController {
                 "code", 200,
                 "data", Map.of(
                         "stateJson", row.get("state_json"),
+                        "savedAt", row.get("saved_at"),
                         "updateTime", row.get("update_time")
                 )
         );
@@ -46,11 +47,16 @@ public class GameStateController {
     public Map<String, Object> saveState(@RequestBody Map<String, Object> params) {
         Long roomId = Long.parseLong(params.get("roomId").toString());
         String stateJson = params.get("stateJson").toString();
+        Long savedAt = Long.parseLong(params.getOrDefault("savedAt", 0).toString());
         jdbcTemplate.update(
-                "INSERT INTO game_state_snapshot (room_id, state_json) VALUES (?, ?) " +
-                        "ON DUPLICATE KEY UPDATE state_json = VALUES(state_json), update_time = CURRENT_TIMESTAMP",
+                "INSERT INTO game_state_snapshot (room_id, state_json, saved_at) VALUES (?, ?, ?) " +
+                        "ON DUPLICATE KEY UPDATE " +
+                        "state_json = IF(VALUES(saved_at) >= saved_at, VALUES(state_json), state_json), " +
+                        "update_time = IF(VALUES(saved_at) >= saved_at, CURRENT_TIMESTAMP, update_time), " +
+                        "saved_at = GREATEST(saved_at, VALUES(saved_at))",
                 roomId,
-                stateJson
+                stateJson,
+                savedAt
         );
         return Map.of("code", 200, "message", "游戏状态已保存");
     }
