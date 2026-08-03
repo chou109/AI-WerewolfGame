@@ -82,15 +82,16 @@
               <div class="badge-frame">
                 <div class="badge-ring"></div>
                 <span class="badge-num">{{ pos.player.playerNumber }}</span>
-                <span v-if="pos.player.isSheriffCandidate && pos.player.isAlive" class="badge-hand" :title="$locale === 'zh-CN' ? '已上警' : 'Running for sheriff'">✋</span>
+                <span v-if="pos.player.isSheriff && pos.player.isAlive" class="badge-crown-top" :title="$locale === 'zh-CN' ? '警长' : 'Sheriff'">♛</span>
+                <span v-else-if="pos.player.isSheriffCandidate && pos.player.isAlive && !sheriffElectionDone" class="badge-hand" :title="$locale === 'zh-CN' ? '已上警' : 'Running for sheriff'">✋</span>
                 <span v-if="gameStarted && getVisibleRoleLabel(pos.player)" class="badge-role" :class="getVisibleRoleClass(pos.player)">{{ getVisibleRoleLabel(pos.player) }}</span>
                 <div class="badge-avatar">
                   <img v-if="getPlayerAvatar(pos.player.id)" :src="getPlayerAvatar(pos.player.id)" :alt="pos.player.playerName" />
                   <span v-else>{{ getAvatarPlaceholder(pos.player.playerName) }}</span>
                 </div>
+                <button v-if="pos.player.aiPlayerId" class="badge-voice" :title="$locale === 'zh-CN' ? '单独语音配置' : 'Player voice settings'" @click.stop="openPlayerVoiceDialog(pos.player)">🔊</button>
                 <div class="badge-footer">
                   <span class="badge-name">{{ pos.player.playerName }}</span>
-                  <span v-if="pos.player.isSheriff && pos.player.isAlive" class="badge-crown" :title="$locale === 'zh-CN' ? '警长' : 'Sheriff'">♛</span>
                 </div>
                 <span v-if="!pos.player.isAlive" class="badge-skull">×</span>
               </div>
@@ -131,8 +132,18 @@
           </div>
         </div>
 
+        <div v-if="decisionWindow.active" class="decision-window">
+          <div>
+            <span class="decision-dot"></span>
+            <strong>{{ decisionWindow.label }}</strong>
+            <small>{{ $locale === 'zh-CN' ? '所有参与者同时决策' : 'All participants decide simultaneously' }}</small>
+          </div>
+          <span class="decision-progress">{{ decisionWindow.completed }} / {{ decisionWindow.total }}</span>
+          <strong class="decision-countdown">{{ decisionWindow.remaining }}s</strong>
+        </div>
+
         <!-- AI Thinking -->
-        <div v-if="currentViewMode === 'god' && aiThinkingPlayers.length" class="thinking-bar">
+        <div v-if="currentViewMode === 'god' && showThinking && aiThinkingPlayers.length" class="thinking-bar">
           <span v-for="pid in aiThinkingPlayers" :key="pid" class="thinking-item">
             <span class="thinking-dot"></span>
             {{ $t('gamePlay.thinking', { name: getPlayerNameById(pid) }) }}
@@ -238,15 +249,16 @@
               <div class="badge-frame">
                 <div class="badge-ring"></div>
                 <span class="badge-num">{{ pos.player.playerNumber }}</span>
-                <span v-if="pos.player.isSheriffCandidate && pos.player.isAlive" class="badge-hand" :title="$locale === 'zh-CN' ? '已上警' : 'Running for sheriff'">✋</span>
+                <span v-if="pos.player.isSheriff && pos.player.isAlive" class="badge-crown-top" :title="$locale === 'zh-CN' ? '警长' : 'Sheriff'">♛</span>
+                <span v-else-if="pos.player.isSheriffCandidate && pos.player.isAlive && !sheriffElectionDone" class="badge-hand" :title="$locale === 'zh-CN' ? '已上警' : 'Running for sheriff'">✋</span>
                 <span v-if="gameStarted && getVisibleRoleLabel(pos.player)" class="badge-role" :class="getVisibleRoleClass(pos.player)">{{ getVisibleRoleLabel(pos.player) }}</span>
                 <div class="badge-avatar">
                   <img v-if="getPlayerAvatar(pos.player.id)" :src="getPlayerAvatar(pos.player.id)" :alt="pos.player.playerName" />
                   <span v-else>{{ getAvatarPlaceholder(pos.player.playerName) }}</span>
                 </div>
+                <button v-if="pos.player.aiPlayerId" class="badge-voice" :title="$locale === 'zh-CN' ? '单独语音配置' : 'Player voice settings'" @click.stop="openPlayerVoiceDialog(pos.player)">🔊</button>
                 <div class="badge-footer">
                   <span class="badge-name">{{ pos.player.playerName }}</span>
-                  <span v-if="pos.player.isSheriff && pos.player.isAlive" class="badge-crown" :title="$locale === 'zh-CN' ? '警长' : 'Sheriff'">♛</span>
                 </div>
                 <span v-if="!pos.player.isAlive" class="badge-skull">×</span>
               </div>
@@ -281,6 +293,53 @@
         <el-button type="primary" @click="confirmAddAiPlayer" :disabled="!selectedAiPlayerId">{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="playerVoiceDialogVisible" :title="voiceEditingPlayer ? `${voiceEditingPlayer.playerNumber}号 ${voiceEditingPlayer.playerName} · 单独语音配置` : '单独语音配置'" width="520px" class="player-voice-dialog">
+      <el-form :model="playerVoiceDraft" label-position="top">
+        <div class="voice-switch-row">
+          <div><strong>继承全局语音</strong><span>开启后使用“语音配置”页面中的统一设置</span></div>
+          <el-switch v-model="playerVoiceDraft.inherit" />
+        </div>
+        <template v-if="!playerVoiceDraft.inherit">
+          <div class="voice-switch-row">
+            <div><strong>启用该玩家语音</strong><span>只控制当前 AI 玩家</span></div>
+            <el-switch v-model="playerVoiceDraft.enabled" />
+          </div>
+          <el-form-item label="语音引擎">
+            <el-radio-group v-model="playerVoiceDraft.engine">
+              <el-radio-button value="browser">浏览器语音</el-radio-button>
+              <el-radio-button value="cloud">云端语音</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="playerVoiceDraft.engine === 'browser'" label="音色">
+            <el-select v-model="playerVoiceDraft.voiceURI" clearable filterable placeholder="自动选择匹配语言的音色" style="width:100%">
+              <el-option v-for="voice in browserVoices" :key="voice.voiceURI" :label="`${voice.name} (${voice.lang})`" :value="voice.voiceURI" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-else label="云端音色">
+            <el-select v-model="playerVoiceDraft.cloudVoice" filterable allow-create default-first-option placeholder="选择或输入音色名称" style="width:100%">
+              <el-option v-for="voice in cloudPlayerVoices" :key="voice" :label="voice" :value="voice" />
+            </el-select>
+          </el-form-item>
+          <div class="player-voice-sliders">
+            <el-form-item label="语速">
+              <div class="voice-slider"><el-slider v-model="playerVoiceDraft.rate" :min="0.5" :max="2" :step="0.1" /><span>{{ playerVoiceDraft.rate.toFixed(1) }}x</span></div>
+            </el-form-item>
+            <el-form-item label="音调">
+              <div class="voice-slider"><el-slider v-model="playerVoiceDraft.pitch" :min="0.5" :max="2" :step="0.1" :disabled="playerVoiceDraft.engine === 'cloud'" /><span>{{ playerVoiceDraft.pitch.toFixed(1) }}</span></div>
+            </el-form-item>
+            <el-form-item label="音量">
+              <div class="voice-slider"><el-slider v-model="playerVoiceDraft.volume" :min="0" :max="1" :step="0.1" /><span>{{ Math.round(playerVoiceDraft.volume * 100) }}%</span></div>
+            </el-form-item>
+          </div>
+        </template>
+      </el-form>
+      <template #footer>
+        <el-button @click="testPlayerVoice">试听</el-button>
+        <el-button @click="playerVoiceDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="savePlayerVoiceConfig">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -290,7 +349,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import { useTypewriter } from '../../composables/useTypewriter.js'
-import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from '../../composables/useSpeechSynthesis.js'
+import { loadVoiceConfig, speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from '../../composables/useSpeechSynthesis.js'
 import { PACK_WOLF_ROLES, WEREWOLF_KNOWLEDGE, WOLF_TEAM_ROLES, getBoardRules, getRoleSummary, isPackWolfRole, isWolfTeamRole } from '../../game/rules.js'
 
 const { proxy } = getCurrentInstance()
@@ -350,6 +409,7 @@ const roleDealStage = ref('shuffle')
 const roleDealMessage = ref('身份牌洗牌中')
 const roleDealProgress = ref('0 / 0')
 const aiThinkingPlayers = ref([])
+const decisionWindow = reactive({ active: false, label: '', remaining: 0, total: 0, completed: 0 })
 const aiSpeakingContent = ref(null)
 const aiPlayers = ref([])
 const selectedAiPlayerId = ref(null)
@@ -359,6 +419,11 @@ const currentViewMode = ref('god')
 const selectedPlayerId = ref(null)
 const showThinking = ref(localStorage.getItem('showThinking') === 'true')
 const typewriterSpeed = ref(localStorage.getItem('typewriterSpeed') || 'normal')
+const playerVoiceDialogVisible = ref(false)
+const voiceEditingPlayer = ref(null)
+const browserVoices = ref([])
+const playerVoiceDraft = reactive({ inherit: true, enabled: true, engine: 'browser', voiceURI: '', cloudVoice: 'alloy', rate: 1, pitch: 1, volume: 1 })
+const playerVoiceConfigs = reactive({})
 const dialogContentRef = ref(null)
 const dialogMessages = ref([])
 const inputMessage = ref('')
@@ -381,6 +446,7 @@ const publicRoleClaims = reactive({})
 const lastExiledPlayerId = ref(null)
 const lastWordsGiven = ref(false)
 const dayInterrupted = ref(false)
+const resumeStage = ref('night')
 const silencedPlayerId = ref(null)
 const bonusDayPending = ref(0)
 const bonusNightPending = ref(0)
@@ -417,6 +483,7 @@ let activeSpeechResolver = null
 let activeSpeechTimer = null
 let activeAutoPassTimer = null
 let activeTypewriterCompleteHandler = null
+let decisionWindowTimer = null
 let speechPausedByGame = false
 let pauseWaiters = []
 let hunterSkillUsed = new Set()
@@ -425,12 +492,86 @@ let knightSkillUsed = new Set()
 
 const SPEEDS = { slow: 80, normal: 50, fast: 30 }
 const SPEECH_LIMIT_SECONDS = 120
+const DECISION_WINDOW_SECONDS = 30
 const speeds = [{ key: 'slow', label: $locale === 'zh-CN' ? '慢' : 'S' }, { key: 'normal', label: $locale === 'zh-CN' ? '常' : 'N' }, { key: 'fast', label: $locale === 'zh-CN' ? '快' : 'F' }]
 const viewModes = [{ key: 'god', label: $t('gamePlay.godView') }, { key: 'player', label: $t('gamePlay.playerView') }, { key: 'spectator', label: $t('gamePlay.spectatorView') }]
 
 watch(showThinking, v => localStorage.setItem('showThinking', v))
 watch(typewriterSpeed, v => { localStorage.setItem('typewriterSpeed', v); setSpeed(v) })
 setSpeed(typewriterSpeed.value)
+
+const playerVoiceStorageKey = `werewolf:player-voices:${roomId}`
+const cloudPlayerVoices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse', 'zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'zh-CN-YunjianNeural', 'en-US-JennyNeural', 'en-US-GuyNeural']
+const loadPlayerVoiceConfigs = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(playerVoiceStorageKey) || '{}')
+    Object.assign(playerVoiceConfigs, saved && typeof saved === 'object' ? saved : {})
+  } catch {
+    Object.keys(playerVoiceConfigs).forEach(key => delete playerVoiceConfigs[key])
+  }
+}
+const savePlayerVoiceConfigs = () => localStorage.setItem(playerVoiceStorageKey, JSON.stringify(playerVoiceConfigs))
+const createPlayerVoiceConfig = saved => ({
+  inherit: saved?.inherit !== false,
+  enabled: saved?.enabled !== false,
+  engine: saved?.engine === 'cloud' ? 'cloud' : 'browser',
+  voiceURI: saved?.voiceURI || '',
+  cloudVoice: saved?.cloudVoice || 'alloy',
+  rate: Math.min(2, Math.max(0.5, Number(saved?.rate) || 1)),
+  pitch: Math.min(2, Math.max(0.5, Number(saved?.pitch) || 1)),
+  volume: Math.min(1, Math.max(0, Number.isFinite(Number(saved?.volume)) ? Number(saved.volume) : 1))
+})
+const getPlayerVoiceOverrides = player => {
+  const config = playerVoiceConfigs[player?.id]
+  if (!config || config.inherit) return {}
+  return {
+    enabled: config.enabled,
+    engine: config.engine,
+    voiceURI: config.voiceURI,
+    rate: config.rate,
+    pitch: config.pitch,
+    volume: config.volume,
+    readPlayers: config.enabled,
+    cloud: { playerVoice: config.cloudVoice, speed: config.rate }
+  }
+}
+const openPlayerVoiceDialog = player => {
+  if (!player?.aiPlayerId) return
+  voiceEditingPlayer.value = player
+  Object.assign(playerVoiceDraft, createPlayerVoiceConfig(playerVoiceConfigs[player.id]))
+  playerVoiceDialogVisible.value = true
+}
+const savePlayerVoiceConfig = () => {
+  if (!voiceEditingPlayer.value) return
+  playerVoiceConfigs[voiceEditingPlayer.value.id] = createPlayerVoiceConfig(playerVoiceDraft)
+  savePlayerVoiceConfigs()
+  persistGameSnapshot(resumeStage.value)
+  ElMessage.success('该 AI 玩家的语音配置已保存')
+  playerVoiceDialogVisible.value = false
+}
+const testPlayerVoice = async () => {
+  const player = voiceEditingPlayer.value
+  if (!player) return
+  stopSpeaking()
+  const overrides = playerVoiceDraft.inherit
+    ? { force: true, speaker: 'player' }
+    : { ...getPlayerVoiceOverrides({ id: '__draft__' }), force: true, speaker: 'player' }
+  if (!playerVoiceDraft.inherit) Object.assign(overrides, {
+    enabled: playerVoiceDraft.enabled,
+    engine: playerVoiceDraft.engine,
+    voiceURI: playerVoiceDraft.voiceURI,
+    rate: playerVoiceDraft.rate,
+    pitch: playerVoiceDraft.pitch,
+    volume: playerVoiceDraft.volume,
+    readPlayers: true,
+    cloud: { playerVoice: playerVoiceDraft.cloudVoice, speed: playerVoiceDraft.rate }
+  })
+  await speakText(`${player.playerNumber}号${player.playerName}语音测试。`, overrides).catch(error => ElMessage.error(`试听失败：${error.message || '语音引擎不可用'}`))
+}
+const loadBrowserVoices = () => {
+  if (typeof window === 'undefined' || !window.speechSynthesis) return
+  browserVoices.value = window.speechSynthesis.getVoices()
+}
 
 // Computed
 const alivePlayers = computed(() => players.value.filter(p => p.isAlive))
@@ -516,12 +657,15 @@ const availableAiPlayers = computed(() => {
   return aiPlayers.value.filter(ai => !used.includes(ai.id))
 })
 const filteredDialogMessages = computed(() => {
-  if (currentViewMode.value === 'god') return dialogMessages.value
-  if (currentViewMode.value === 'spectator') return dialogMessages.value.filter(m => (m.visibility || 'public') === 'public')
+  const visibleMessages = showThinking.value
+    ? dialogMessages.value
+    : dialogMessages.value.filter(message => message.type !== 'thinking')
+  if (currentViewMode.value === 'god') return visibleMessages
+  if (currentViewMode.value === 'spectator') return visibleMessages.filter(m => (m.visibility || 'public') === 'public')
   if (currentViewMode.value === 'player' && selectedPlayerId.value) {
     const sp = players.value.find(p => p.id === selectedPlayerId.value)
     if (!sp) return []
-    return dialogMessages.value.filter(m => {
+    return visibleMessages.filter(m => {
       const visibility = m.visibility || 'public'
       if (visibility === 'public') return true
       if (visibility === 'private') return m.privateFor === sp.id
@@ -529,7 +673,7 @@ const filteredDialogMessages = computed(() => {
       return visibility === 'god' ? false : m.sender === sp.playerName
     })
   }
-  return dialogMessages.value.filter(m => (m.visibility || 'public') === 'public')
+  return visibleMessages.filter(m => (m.visibility || 'public') === 'public')
 })
 const canSpeak = computed(() => {
   if (currentPhase.value === 'speak' && speakingPlayer.value) {
@@ -624,19 +768,181 @@ const roleForSeer = player => {
   return '好人'
 }
 
+const gameSnapshotStorageKey = `werewolf:game-state:${roomId}`
+const snapshotClone = value => JSON.parse(JSON.stringify(value))
+const clearAndAssignReactive = (target, source) => {
+  Object.keys(target).forEach(key => delete target[key])
+  Object.assign(target, source || {})
+}
+const buildGameSnapshot = stage => ({
+  version: 2,
+  savedAt: Date.now(),
+  roomId: Number(roomId),
+  resumeStage: stage || resumeStage.value || 'night',
+  gameStarted: gameStarted.value,
+  roomInfo: snapshotClone(roomInfo.value),
+  players: players.value.map(player => ({
+    id: player.id,
+    playerNumber: player.playerNumber,
+    playerName: player.playerName,
+    role: player.role,
+    isAlive: player.isAlive,
+    isSheriff: player.isSheriff,
+    isSheriffCandidate: player.isSheriffCandidate,
+    userId: player.userId,
+    aiPlayerId: player.aiPlayerId,
+    avatarUrl: player.avatarUrl || ''
+  })),
+  currentRound: currentRound.value,
+  currentDay: currentDay.value,
+  currentPhase: currentPhase.value,
+  dialogMessages: dialogMessages.value.slice(-800),
+  speechOrder: snapshotClone(speechOrder.value),
+  speechIndex: speechIndex.value,
+  voteHistory: snapshotClone(voteHistory.value),
+  lastPublicNightReport: lastPublicNightReport.value,
+  lastGuardTargetId: lastGuardTargetId.value,
+  sheriffDirection: sheriffDirection.value,
+  sheriffElectionDone: sheriffElectionDone.value,
+  sheriffBadgeLost: sheriffBadgeLost.value,
+  publicRoleClaims: snapshotClone(publicRoleClaims),
+  lastExiledPlayerId: lastExiledPlayerId.value,
+  lastWordsGiven: lastWordsGiven.value,
+  dayInterrupted: dayInterrupted.value,
+  silencedPlayerId: silencedPlayerId.value,
+  bonusDayPending: bonusDayPending.value,
+  bonusNightPending: bonusNightPending.value,
+  miracleMerchantState: snapshotClone(miracleMerchantState),
+  wolfBeautyState: snapshotClone(wolfBeautyState),
+  stalkerState: snapshotClone(stalkerState),
+  silencerState: snapshotClone(silencerState),
+  nightmareState: snapshotClone(nightmareState),
+  magicianState: snapshotClone(magicianState),
+  cupidState: snapshotClone(cupidState),
+  wolfBrotherState: snapshotClone(wolfBrotherState),
+  janusState: snapshotClone(janusState),
+  mechanicalWolfState: snapshotClone(mechanicalWolfState),
+  dreamerState: snapshotClone(dreamerState),
+  evilKnightState: snapshotClone(evilKnightState),
+  shapeshifterState: snapshotClone(shapeshifterState),
+  cursedFoxState: snapshotClone(cursedFoxState),
+  witchInventory: snapshotClone(witchInventory),
+  nightState: snapshotClone(nightState),
+  playerMemories: snapshotClone(playerMemories),
+  playerVoiceConfigs: snapshotClone(playerVoiceConfigs),
+  idiotFlippedIds: [...idiotFlippedIds],
+  bomberSuppressedIds: [...bomberSuppressedIds],
+  specialDeathProcessedIds: [...specialDeathProcessedIds],
+  hunterSkillUsed: [...hunterSkillUsed],
+  wolfKingSkillUsed: [...wolfKingSkillUsed],
+  knightSkillUsed: [...knightSkillUsed],
+  showThinking: showThinking.value,
+  typewriterSpeed: typewriterSpeed.value,
+  currentViewMode: currentViewMode.value,
+  selectedPlayerId: selectedPlayerId.value
+})
+const persistGameSnapshot = (stage = resumeStage.value) => {
+  if (!players.value.length || !gameStarted.value) return
+  const snapshot = buildGameSnapshot(stage)
+  const serialized = JSON.stringify(snapshot)
+  localStorage.setItem(gameSnapshotStorageKey, serialized)
+  void axios.put('/game/state', { roomId: Number(roomId), stateJson: serialized }).catch(() => {})
+}
+const readRemoteGameSnapshot = async () => {
+  try {
+    const response = await axios.get(`/game/state/${roomId}`)
+    const stateJson = response.data?.code === 200 ? response.data.data?.stateJson : null
+    return stateJson ? JSON.parse(stateJson) : null
+  } catch {
+    return null
+  }
+}
+const restoreGameSnapshot = async () => {
+  let localSnapshot = null
+  try { localSnapshot = JSON.parse(localStorage.getItem(gameSnapshotStorageKey) || 'null') } catch { localSnapshot = null }
+  const remoteSnapshot = await readRemoteGameSnapshot()
+  const snapshot = [localSnapshot, remoteSnapshot]
+    .filter(item => item && Number(item.roomId) === Number(roomId) && Array.isArray(item.players))
+    .sort((a, b) => Number(b.savedAt || 0) - Number(a.savedAt || 0))[0]
+  if (!snapshot || snapshot.players.length !== players.value.length) return false
+  const currentIds = new Set(players.value.map(player => String(player.id)))
+  if (snapshot.players.some(player => !currentIds.has(String(player.id)))) return false
+
+  const savedPlayers = new Map(snapshot.players.map(player => [String(player.id), player]))
+  players.value = players.value.map(player => ({ ...player, ...savedPlayers.get(String(player.id)), avatarUrl: player.avatarUrl || savedPlayers.get(String(player.id))?.avatarUrl || '' }))
+  Object.assign(roomInfo.value, snapshot.roomInfo || {})
+  currentRound.value = Number(snapshot.currentRound || 1)
+  currentDay.value = Number(snapshot.currentDay || 1)
+  currentPhase.value = snapshot.currentPhase || 'night'
+  gameStarted.value = Boolean(snapshot.gameStarted)
+  dialogMessages.value = Array.isArray(snapshot.dialogMessages) ? snapshot.dialogMessages : []
+  speechOrder.value = Array.isArray(snapshot.speechOrder) ? snapshot.speechOrder : []
+  speechIndex.value = Number.isInteger(snapshot.speechIndex) ? snapshot.speechIndex : -1
+  voteHistory.value = Array.isArray(snapshot.voteHistory) ? snapshot.voteHistory : []
+  lastPublicNightReport.value = snapshot.lastPublicNightReport || ''
+  lastGuardTargetId.value = snapshot.lastGuardTargetId || null
+  sheriffDirection.value = snapshot.sheriffDirection || 'clockwise'
+  sheriffElectionDone.value = Boolean(snapshot.sheriffElectionDone)
+  sheriffBadgeLost.value = Boolean(snapshot.sheriffBadgeLost)
+  clearAndAssignReactive(publicRoleClaims, snapshot.publicRoleClaims)
+  lastExiledPlayerId.value = snapshot.lastExiledPlayerId || null
+  lastWordsGiven.value = Boolean(snapshot.lastWordsGiven)
+  dayInterrupted.value = Boolean(snapshot.dayInterrupted)
+  silencedPlayerId.value = snapshot.silencedPlayerId || null
+  bonusDayPending.value = Number(snapshot.bonusDayPending || 0)
+  bonusNightPending.value = Number(snapshot.bonusNightPending || 0)
+  Object.assign(miracleMerchantState, snapshot.miracleMerchantState || {})
+  Object.assign(wolfBeautyState, snapshot.wolfBeautyState || {})
+  Object.assign(stalkerState, snapshot.stalkerState || {})
+  Object.assign(silencerState, snapshot.silencerState || {})
+  Object.assign(nightmareState, snapshot.nightmareState || {})
+  Object.assign(magicianState, snapshot.magicianState || {})
+  Object.assign(cupidState, snapshot.cupidState || {})
+  Object.assign(wolfBrotherState, snapshot.wolfBrotherState || {})
+  Object.assign(janusState, snapshot.janusState || {})
+  Object.assign(mechanicalWolfState, snapshot.mechanicalWolfState || {})
+  Object.assign(dreamerState, snapshot.dreamerState || {})
+  Object.assign(evilKnightState, snapshot.evilKnightState || {})
+  Object.assign(shapeshifterState, snapshot.shapeshifterState || {})
+  Object.assign(cursedFoxState, snapshot.cursedFoxState || {})
+  Object.assign(witchInventory, snapshot.witchInventory || {})
+  Object.assign(nightState, createEmptyNightState(), snapshot.nightState || {})
+  clearAndAssignReactive(playerMemories, snapshot.playerMemories)
+  clearAndAssignReactive(playerVoiceConfigs, snapshot.playerVoiceConfigs)
+  savePlayerVoiceConfigs()
+  idiotFlippedIds.clear(); (snapshot.idiotFlippedIds || []).forEach(id => idiotFlippedIds.add(id))
+  bomberSuppressedIds.clear(); (snapshot.bomberSuppressedIds || []).forEach(id => bomberSuppressedIds.add(id))
+  specialDeathProcessedIds.clear(); (snapshot.specialDeathProcessedIds || []).forEach(id => specialDeathProcessedIds.add(id))
+  hunterSkillUsed = new Set(snapshot.hunterSkillUsed || [])
+  wolfKingSkillUsed = new Set(snapshot.wolfKingSkillUsed || [])
+  knightSkillUsed = new Set(snapshot.knightSkillUsed || [])
+  showThinking.value = snapshot.showThinking !== false
+  typewriterSpeed.value = snapshot.typewriterSpeed || typewriterSpeed.value
+  currentViewMode.value = snapshot.currentViewMode || 'god'
+  selectedPlayerId.value = snapshot.selectedPlayerId || players.value[0]?.id || null
+  resumeStage.value = snapshot.resumeStage || 'night'
+  roleDealVisible.value = false
+  aiThinkingPlayers.value = []
+  aiSpeakingContent.value = null
+  players.value.forEach(player => { player.isSpeaking = false })
+  return true
+}
+
 // Game setup
 const startGame = async () => {
   const required = roomInfo.value.playerCount || 12
   if (players.value.length < required) { ElMessage.warning($t('gamePlay.notEnoughPlayers', { count: required })); return }
-  await loadGameData()
+  await loadGameData({ restore: false })
   initializeGameState()
   await playRoleDealAnimation(distributeRoles)
   players.value.forEach(p => { if (p.aiPlayerId) p.userId = -1 })
   await startGamePhase()
   gameStarted.value = true
   notifyPlayerRoles()
+  resumeStage.value = 'night'
+  persistGameSnapshot('night')
   const version = ++gameLoopVersion
-  void runGameLoop(version)
+  void runGameLoop(version, 'night')
 }
 const notifyPlayerRoles = () => {
   players.value.forEach(p => {
@@ -653,6 +959,7 @@ const notifyPlayerRoles = () => {
 const exitGame = () => {
   ElMessageBox.confirm($t('gamePlay.confirmExit'), $t('gamePlay.exitGameTitle'), { confirmButtonText: $t('common.confirm'), cancelButtonText: $t('common.cancel'), type: 'warning' })
     .then(() => {
+      persistGameSnapshot(resumeStage.value)
       gameStarted.value = false
       phaseRunning.value = false
       isGamePaused.value = false
@@ -681,7 +988,7 @@ const confirmAddAiPlayer = async () => {
     if (r.data.code === 200 || r.status === 200) { ElMessage.success($t('gamePlay.aiPlayerAdded', { name: ai.name })); await loadGameData(); selectedAiPlayerId.value = null; currentPosition.value = null; addAiDialogVisible.value = false }
   } catch (e) { ElMessage.error($t('common.failed')) }
 }
-const loadGameData = async () => {
+const loadGameData = async (options = {}) => {
   try {
     const rr = await axios.get(`/game/room/info/${roomId}`)
     let room = rr.data.code === 200 ? rr.data.data : rr.data
@@ -700,6 +1007,7 @@ const loadGameData = async () => {
       } catch (e) {}
     }
     if (players.value.length) selectedPlayerId.value = players.value[0].id
+    if (options.restore && await restoreGameSnapshot()) return true
     if (!dialogMessages.value.length) {
       addRefereeMessage($t('gamePlay.gameWelcome'))
       addRefereeMessage(currentLocale() === 'zh-CN'
@@ -710,7 +1018,8 @@ const loadGameData = async () => {
         : `Board rules: ${boardRules.value.special} Roles: ${getRoleSummary(boardRules.value)}.`)
       addRefereeMessage($t('gamePlay.gameHelp'))
     }
-  } catch (e) { roomInfo.value = { playerCount: 12 }; players.value = [] }
+    return false
+  } catch (e) { roomInfo.value = { playerCount: 12 }; players.value = []; return false }
 }
 const distributeRoles = async () => {
   try {
@@ -907,7 +1216,7 @@ const endPlayerSpeaking = () => {
   speakingPlayer.value = null
 }
 const setSheriff = (pid) => {
-  players.value.forEach(p => { p.isSheriff = p.id === pid })
+  players.value.forEach(p => { p.isSheriff = p.id === pid; p.isSheriffCandidate = false })
   const s = players.value.find(p => p.id === pid)
   if (s) addRefereeMessage($t('gamePlay.sheriffElected', { name: s.playerName }))
 }
@@ -962,6 +1271,11 @@ const initializeGameState = () => {
   currentDay.value = 1
   currentPhase.value = 'night'
   isGamePaused.value = false
+  decisionWindow.active = false
+  decisionWindow.remaining = 0
+  decisionWindow.completed = 0
+  decisionWindow.total = 0
+  decisionWindow.label = ''
   speechPaused.value = false
   speechTimeRemaining.value = SPEECH_LIMIT_SECONDS
   speechOrder.value = []
@@ -978,6 +1292,7 @@ const initializeGameState = () => {
   lastExiledPlayerId.value = null
   lastWordsGiven.value = false
   dayInterrupted.value = false
+  resumeStage.value = 'night'
   silencedPlayerId.value = null
   bonusDayPending.value = 0
   bonusNightPending.value = 0
@@ -1256,6 +1571,44 @@ const requestPlayerDecision = async (player, action, extra = {}) => {
   } finally {
     aiThinkingPlayers.value = aiThinkingPlayers.value.filter(id => id !== player.id)
   }
+}
+
+const runDecisionWindow = async (version, participants, action, extraBuilder, label, seconds = DECISION_WINDOW_SECONDS) => {
+  const eligible = participants.filter(player => player?.isAlive && isLoopActive(version))
+  const results = new Map()
+  if (!eligible.length) return results
+  const participantIds = eligible.map(player => player.id)
+  decisionWindow.active = true
+  decisionWindow.label = label
+  decisionWindow.remaining = seconds
+  decisionWindow.total = eligible.length
+  decisionWindow.completed = 0
+  let timerResolve
+  const deadline = new Promise(resolve => { timerResolve = resolve })
+  decisionWindowTimer = setInterval(() => {
+    if (isGamePaused.value) return
+    decisionWindow.remaining = Math.max(0, decisionWindow.remaining - 1)
+    if (decisionWindow.remaining === 0) timerResolve('timeout')
+  }, 1000)
+  const tasks = eligible.map(async player => {
+    const decision = await requestPlayerDecision(player, action, extraBuilder(player))
+    results.set(player.id, decision)
+    if (decisionWindow.active && decisionWindow.label === label) decisionWindow.completed = results.size
+    return decision
+  })
+  const allDone = Promise.allSettled(tasks).then(() => 'complete')
+  await Promise.race([allDone, deadline])
+  if (decisionWindowTimer) clearInterval(decisionWindowTimer)
+  decisionWindowTimer = null
+  decisionWindow.active = false
+  decisionWindow.label = ''
+  decisionWindow.remaining = 0
+  decisionWindow.total = 0
+  decisionWindow.completed = 0
+  if (participantIds.length && results.size < participantIds.length) {
+    addRefereeMessage(`${label}时间到，未提交的玩家由主持人按规则补充决定。`, { visibility: 'god' })
+  }
+  return results
 }
 
 const resolvePlayerTarget = (value, candidates) => {
@@ -1589,9 +1942,10 @@ const runWolfActions = async (version) => {
   if (!packWolves.length && gargoyle) {
     addRefereeMessage('其他狼人已全部出局，石像鬼本夜获得单独袭击能力。', { visibility: 'god' })
   }
+  const wolfDecisions = await runDecisionWindow(version, wolves, 'wolf', () => ({ candidates: candidates.map(p => `${p.playerNumber}号`).join('、') }), '狼人刀口决策')
   for (const wolf of wolves) {
     if (!isLoopActive(version) || !candidates.length) break
-    const decision = await requestPlayerDecision(wolf, 'wolf', { candidates: candidates.map(p => `${p.playerNumber}号`).join('、') })
+    const decision = wolfDecisions.get(wolf.id) || {}
     recordPrivateThinking(wolf, decision.thinking, '狼人刀口')
     const deliberatelyEmpty = Object.prototype.hasOwnProperty.call(decision, 'target') && decision.target === null
     const target = deliberatelyEmpty ? null : (resolvePlayerTarget(decision.target, candidates) || randomItem(candidates))
@@ -2040,7 +2394,7 @@ const presentSpeech = (player, speech, thinking, language, passDelaySeconds = 1.
     scheduleAutoPass()
   }
   startTypewriter(speech, { speed: SPEEDS[typewriterSpeed.value] || 50, onComplete: activeTypewriterCompleteHandler })
-  void speakText(speech, { lang: language, speaker: 'player' })
+  void speakText(speech, { ...getPlayerVoiceOverrides(player), lang: language, speaker: 'player' })
     .catch(error => console.warn('Player speech failed:', error))
     .finally(() => {
       playbackComplete = true
@@ -2111,11 +2465,15 @@ const createRandomSpeechOrder = () => {
 
 const collectSheriffVote = async (version, candidates, voters, label) => {
   const ballots = []
+  const decisions = await runDecisionWindow(version, voters, 'sheriffVote', voter => {
+    const options = candidates.filter(candidate => candidate.id !== voter.id)
+    return { candidates: options.map(player => `${player.playerNumber}号`).join('、') }
+  }, label)
   for (const voter of voters) {
     if (!isLoopActive(version)) break
     const options = candidates.filter(candidate => candidate.id !== voter.id)
     if (!options.length) continue
-    const decision = await requestPlayerDecision(voter, 'sheriffVote', { candidates: options.map(player => `${player.playerNumber}号`).join('、') })
+    const decision = decisions.get(voter.id) || {}
     recordPrivateThinking(voter, decision.thinking, label)
     const target = resolvePlayerTarget(decision.target, options) || randomItem(options)
     if (!target) continue
@@ -2133,11 +2491,13 @@ const collectSheriffVote = async (version, candidates, voters, label) => {
 const runSheriffElection = async version => {
   if (!boardRules.value.sheriff || sheriffElectionDone.value || !isLoopActive(version)) return
   currentPhase.value = 'sheriff'
+  players.value.forEach(player => { player.isSheriffCandidate = false })
   addRefereeMessage('第一天天亮后进入警长竞选：先上警，再随机发言，随后退水，最后只由警下玩家投票。警上未退水者没有警徽投票权。')
   const campaignPlans = new Map()
   const candidates = []
+  const campaignDecisions = await runDecisionWindow(version, [...alivePlayers.value], 'sheriffCampaign', () => ({}), '上警决策')
   for (const player of [...alivePlayers.value]) {
-    const decision = await requestPlayerDecision(player, 'sheriffCampaign')
+    const decision = campaignDecisions.get(player.id) || {}
     recordPrivateThinking(player, decision.thinking, '警长竞选')
     const run = decision.run === undefined ? hasRole(player, 'seer') : Boolean(decision.run)
     if (run) {
@@ -2147,6 +2507,7 @@ const runSheriffElection = async version => {
     }
   }
   if (!candidates.length) {
+    players.value.forEach(player => { player.isSheriffCandidate = false })
     sheriffBadgeLost.value = true
     sheriffElectionDone.value = true
     addRefereeMessage('本轮没有玩家上警，警徽流失，本局不再产生警长。')
@@ -2155,6 +2516,7 @@ const runSheriffElection = async version => {
   addRefereeMessage(`本次上警玩家：${candidates.map(player => `${player.playerNumber}号`).join('、')}。`)
   const campaignSpeech = await runSpeechPhase(version, shuffleArray([...candidates]).map(player => player.id), 'sheriffSpeech')
   if (campaignSpeech?.interrupted || dayInterrupted.value) {
+    players.value.forEach(player => { player.isSheriffCandidate = false })
     sheriffBadgeLost.value = true
     sheriffElectionDone.value = true
     addRefereeMessage('竞选发言中发生狼人自爆，警徽被吞，竞选立即中止并进入黑夜。')
@@ -2163,8 +2525,9 @@ const runSheriffElection = async version => {
   if (!isLoopActive(version)) return
   addRefereeMessage('警上发言结束，开始退水。退水玩家恢复警徽投票权，但失去警长候选资格。')
   const finalCandidates = []
+  const withdrawDecisions = await runDecisionWindow(version, candidates, 'sheriffWithdraw', () => ({}), '退水决策')
   for (const player of candidates) {
-    const decision = await requestPlayerDecision(player, 'sheriffWithdraw')
+    const decision = withdrawDecisions.get(player.id) || {}
     recordPrivateThinking(player, decision.thinking, '警长退水')
     const withdraw = decision.withdraw === undefined ? false : Boolean(decision.withdraw)
     if (withdraw) {
@@ -2175,6 +2538,7 @@ const runSheriffElection = async version => {
     }
   }
   if (!finalCandidates.length) {
+    players.value.forEach(player => { player.isSheriffCandidate = false })
     sheriffBadgeLost.value = true
     sheriffElectionDone.value = true
     addRefereeMessage('所有警上玩家都已退水，警徽流失。')
@@ -2196,6 +2560,7 @@ const runSheriffElection = async version => {
     addRefereeMessage(`警徽投票平票：${leaders.map(player => `${player.playerNumber}号`).join('、')}，进入PK发言。`)
     const pk = await runSpeechPhase(version, shuffleArray([...leaders]).map(player => player.id), 'sheriffPkSpeech')
     if (pk?.interrupted || dayInterrupted.value) {
+      players.value.forEach(player => { player.isSheriffCandidate = false })
       sheriffBadgeLost.value = true
       sheriffElectionDone.value = true
       return
@@ -2211,6 +2576,7 @@ const runSheriffElection = async version => {
     addRefereeMessage(`${winner.playerNumber}号${winner.playerName}当选警长，之后由其决定${sheriffDirection.value === 'clockwise' ? '顺时针' : '逆时针'}发言。`)
   } else {
     sheriffBadgeLost.value = true
+    players.value.forEach(player => { player.isSheriffCandidate = false })
     addRefereeMessage('警徽PK重投再次平票，警徽流失，本局不再产生警长。')
   }
   sheriffElectionDone.value = true
@@ -2219,7 +2585,11 @@ const runSheriffElection = async version => {
 const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech') => {
   currentPhase.value = 'speak'
   let orderInfo
-  if (onlyCandidates) {
+  let resumeIndex = 0
+  if (!onlyCandidates && action === 'speech' && resumeStage.value === 'speech' && speechOrder.value.length && speechIndex.value >= 0) {
+    orderInfo = { ids: speechOrder.value.filter(id => players.value.find(player => player.id === id)?.isAlive), direction: sheriffDirection.value, start: null }
+    resumeIndex = Math.max(0, speechIndex.value)
+  } else if (onlyCandidates) {
     orderInfo = { ids: onlyCandidates.filter(id => players.value.find(p => p.id === id)?.isAlive), direction: 'pk', start: null }
   } else {
     orderInfo = createRandomSpeechOrder()
@@ -2230,7 +2600,7 @@ const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech')
       ? `警长${sheriff.playerNumber}号决定从自己${orderInfo.direction === 'clockwise' ? '右侧' : '左侧'}开始，按${directionText}发言，警长末置位归票。顺序：${orderInfo.ids.map(getPlayerNumberById).join('→')}号。`
       : `进入发言阶段。本轮由代码随机决定从${orderInfo.start?.playerNumber}号开始，按${directionText}发言。顺序：${orderInfo.ids.map(getPlayerNumberById).join('→')}号。`)
   }
-  for (let index = 0; index < orderInfo.ids.length; index++) {
+  for (let index = resumeIndex; index < orderInfo.ids.length; index++) {
     if (!isLoopActive(version)) break
     speechIndex.value = index
     const player = players.value.find(p => p.id === orderInfo.ids[index] && p.isAlive)
@@ -2275,6 +2645,11 @@ const runSpeechPhase = async (version, onlyCandidates = null, action = 'speech')
     await presentSpeech(player, result.speech, result.thinking, result.language, result.passDelaySeconds)
     await audienceThinking
     endPlayerSpeaking()
+    if (!onlyCandidates && action === 'speech') {
+      speechIndex.value = index + 1
+      resumeStage.value = 'speech'
+      persistGameSnapshot('speech')
+    }
     await phaseDelay(260)
   }
   speechIndex.value = -1
@@ -2313,15 +2688,19 @@ const runKnightAction = async version => {
 const collectVoteRound = async (version, candidateIds = null, label = '公投') => {
   const eligibleCandidates = alivePlayers.value.filter(player => !candidateIds || candidateIds.includes(player.id))
   const ballots = []
-  for (const voter of [...alivePlayers.value]) {
+  const voters = [...alivePlayers.value].filter(voter => !idiotFlippedIds.has(voter.id))
+  alivePlayers.value.filter(voter => idiotFlippedIds.has(voter.id)).forEach(voter => {
+    addRefereeMessage(`${voter.playerNumber}号白痴已翻牌，失去投票权。`, { visibility: 'god' })
+  })
+  const decisions = await runDecisionWindow(version, voters, 'vote', voter => {
+    const candidates = eligibleCandidates.filter(candidate => candidate.id !== voter.id)
+    return { candidates: candidates.map(p => `${p.playerNumber}号`).join('、') }
+  }, label)
+  for (const voter of voters) {
     if (!isLoopActive(version)) break
-    if (idiotFlippedIds.has(voter.id)) {
-      addRefereeMessage(`${voter.playerNumber}号白痴已翻牌，失去投票权。`, { visibility: 'god' })
-      continue
-    }
     const candidates = eligibleCandidates.filter(candidate => candidate.id !== voter.id)
     if (!candidates.length) continue
-    const decision = await requestPlayerDecision(voter, 'vote', { candidates: candidates.map(p => `${p.playerNumber}号`).join('、') })
+    const decision = decisions.get(voter.id) || {}
     recordPrivateThinking(voter, decision.thinking, `${label}投票`)
     const target = resolvePlayerTarget(decision.target, candidates) || randomItem(candidates)
     if (!target) continue
@@ -2470,17 +2849,26 @@ const runQueuedExtraPhases = async version => {
   }
 }
 
-const runGameLoop = async (version) => {
+const saveLoopCheckpoint = stage => {
+  resumeStage.value = stage
+  persistGameSnapshot(stage)
+}
+
+const runGameLoop = async (version, initialStage = 'night') => {
   if (phaseRunning.value) return
   phaseRunning.value = true
+  let stage = initialStage || 'night'
   await phaseDelay(500)
   try {
     while (isLoopActive(version)) {
       await waitWhilePaused()
-      await runNightPhase(version)
-      if (!isLoopActive(version)) break
-      await waitWhilePaused()
-      if (boardRules.value.sheriff && !sheriffElectionDone.value) {
+      if (stage === 'night') {
+        await runNightPhase(version)
+        if (!isLoopActive(version)) break
+        stage = boardRules.value.sheriff && !sheriffElectionDone.value ? 'sheriff' : 'announce'
+        saveLoopCheckpoint(stage)
+      }
+      if (stage === 'sheriff') {
         await runSheriffElection(version)
         if (!isLoopActive(version)) break
         if (dayInterrupted.value) {
@@ -2489,34 +2877,51 @@ const runGameLoop = async (version) => {
           dayInterrupted.value = false
           currentRound.value++
           currentDay.value++
+          stage = 'night'
+          saveLoopCheckpoint(stage)
           await phaseDelay(700)
           continue
         }
         if (checkGameEnd()) break
+        stage = 'announce'
+        saveLoopCheckpoint(stage)
       }
-      await waitWhilePaused()
-      await announceDay(version)
-      if (checkGameEnd() || !isLoopActive(version)) break
-      await waitWhilePaused()
-      await runSpeechPhase(version)
-      if (!isLoopActive(version)) break
-      if (dayInterrupted.value) {
+      if (stage === 'announce') {
+        await announceDay(version)
         if (checkGameEnd() || !isLoopActive(version)) break
-        dayInterrupted.value = false
+        speechOrder.value = []
+        speechIndex.value = -1
+        stage = 'speech'
+        saveLoopCheckpoint(stage)
+      }
+      if (stage === 'speech') {
+        await runSpeechPhase(version, null, 'speech')
+        if (!isLoopActive(version)) break
+        if (dayInterrupted.value) {
+          if (checkGameEnd() || !isLoopActive(version)) break
+          dayInterrupted.value = false
+          currentRound.value++
+          currentDay.value++
+          stage = 'night'
+          saveLoopCheckpoint(stage)
+          await phaseDelay(700)
+          continue
+        }
+        stage = 'vote'
+        saveLoopCheckpoint(stage)
+      }
+      if (stage === 'vote') {
+        await runVotePhase(version)
+        if (checkGameEnd() || !isLoopActive(version)) break
+        await runQueuedExtraPhases(version)
+        if (checkGameEnd() || !isLoopActive(version)) break
+        silencedPlayerId.value = null
         currentRound.value++
         currentDay.value++
+        stage = 'night'
+        saveLoopCheckpoint(stage)
         await phaseDelay(700)
-        continue
       }
-      await waitWhilePaused()
-      await runVotePhase(version)
-      if (checkGameEnd() || !isLoopActive(version)) break
-      await runQueuedExtraPhases(version)
-      if (checkGameEnd() || !isLoopActive(version)) break
-      silencedPlayerId.value = null
-      currentRound.value++
-      currentDay.value++
-      await phaseDelay(700)
     }
   } catch (error) {
     console.error('Game loop failed:', error)
@@ -2526,14 +2931,29 @@ const runGameLoop = async (version) => {
   }
 }
 
-onMounted(() => loadGameData())
+onMounted(async () => {
+  loadPlayerVoiceConfigs()
+  loadBrowserVoices()
+  window.speechSynthesis?.addEventListener('voiceschanged', loadBrowserVoices)
+  const restored = await loadGameData({ restore: true })
+  if (restored && gameStarted.value) {
+    addRefereeMessage('已恢复本房间的游戏状态，流程从上次安全节点继续。', { voice: false })
+    const version = ++gameLoopVersion
+    void runGameLoop(version, resumeStage.value)
+  }
+})
 onUnmounted(() => {
+  if (gameStarted.value) persistGameSnapshot(resumeStage.value)
   gameLoopVersion++
+  if (decisionWindowTimer) clearInterval(decisionWindowTimer)
+  decisionWindowTimer = null
+  decisionWindow.active = false
   gameStarted.value = false
   isGamePaused.value = false
   releasePauseWaiters()
   closeSpeech('unmount')
   stopSpeaking()
+  window.speechSynthesis?.removeEventListener('voiceschanged', loadBrowserVoices)
 })
 </script>
 
@@ -2573,6 +2993,7 @@ onUnmounted(() => {
 .deal-fade-enter-active, .deal-fade-leave-active { transition: opacity .35s ease; }
 .deal-fade-enter-from, .deal-fade-leave-to { opacity: 0; }
 @keyframes dealShuffle { from { transform: translateX(calc(var(--offset) - 8px)) rotate(calc(var(--card-index) * 1deg)); } to { transform: translateX(calc(var(--offset) + 8px)) rotate(calc(var(--card-index) * 3deg)); } }
+@keyframes pulse { 50% { opacity: .45; transform: scale(.8); } }
 
 /* ===== Top Bar ===== */
 .game-topbar {
@@ -2714,8 +3135,10 @@ onUnmounted(() => {
 .badge-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .badge-avatar span { width: 44px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge-footer { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; padding: 0 17px; }
-.badge-crown { flex: 0 0 auto; color: #f1ce70; font-size: 0.9rem; }
+.badge-crown-top { position: absolute; top: 4px; left: 6px; z-index: 3; color: #f1ce70; font-size: 0.95rem; text-shadow: 0 0 10px rgba(241, 206, 112, .5); }
 .badge-hand { position: absolute; top: 5px; left: 6px; z-index: 3; font-size: 0.85rem; }
+.badge-voice { position: absolute; right: 5px; bottom: 5px; z-index: 4; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 1px solid rgba(222, 190, 112, .35); border-radius: 50%; color: #e8c870; background: rgba(9, 18, 26, .8); cursor: pointer; font-size: .7rem; }
+.badge-voice:hover { border-color: var(--gold); background: rgba(222, 190, 112, .18); }
 .badge-skull { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; color: #ef8e84; background: rgba(7, 9, 11, .45); font: 700 2rem/1 var(--font-heading); }
 .badge-role {
   position: absolute; top: 5px; right: 5px; z-index: 3; display: inline-block; max-width: 74px; padding: 2px 5px; border-radius: 3px;
@@ -2755,6 +3178,12 @@ onUnmounted(() => {
 .ledger-result { grid-column: 1 / -1; }
 .ledger-result strong { color: #d6bd82; }
 
+.decision-window { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; padding: 6px 11px; border: 1px solid rgba(217, 181, 93, .35); border-radius: 5px; color: #e8d49d; background: rgba(108, 78, 26, .2); }
+.decision-window > div { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.decision-window small { color: #9d8e6f; font-size: .68rem; }
+.decision-dot { width: 7px; height: 7px; border-radius: 50%; background: #e8c870; box-shadow: 0 0 0 4px rgba(232, 200, 112, .12); animation: pulse 1.2s ease-in-out infinite; }
+.decision-progress { color: #b9c6ce; font: 700 .72rem/1 var(--font-heading); }
+.decision-countdown { min-width: 42px; color: #f2ce72; font: 700 .95rem/1 var(--font-heading); text-align: right; }
 .thinking-bar { display: flex; flex: 0 0 auto; gap: 8px; flex-wrap: nowrap; min-height: 28px; overflow-x: auto; overflow-y: hidden; }
 .thinking-item {
   display: flex; align-items: center; gap: 6px;
@@ -2853,6 +3282,15 @@ onUnmounted(() => {
 .private-log-label { color: var(--text-muted); font: 700 0.58rem/1.6 var(--font-heading); }
 .private-log strong { color: var(--gold); }
 
+.voice-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; padding: 12px 14px; border: 1px solid rgba(180, 204, 222, .15); border-radius: 6px; background: rgba(5, 12, 19, .34); }
+.voice-switch-row strong, .voice-switch-row span { display: block; }
+.voice-switch-row strong { color: #e8eef3; font-size: 13px; }
+.voice-switch-row span { margin-top: 4px; color: #8294a3; font-size: 12px; }
+.player-voice-sliders { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.voice-slider { display: flex; align-items: center; gap: 8px; }
+.voice-slider :deep(.el-slider) { flex: 1; min-width: 70px; }
+.voice-slider > span { min-width: 34px; color: #e4bd65; font-size: 12px; text-align: right; }
+
 /* Bubble */
 .bubble-row { display: flex; gap: 10px; align-items: flex-start; animation: fadeIn 0.3s ease; }
 .bubble-row.mine { flex-direction: row-reverse; }
@@ -2890,7 +3328,7 @@ onUnmounted(() => {
   .player-badge { width: 100%; max-height: 82px; }
   .badge-avatar { width: 38px; height: 38px; }
 }
-@media (max-width: 700px) { .game-ledger { grid-template-columns: 1fr 1fr; } .ledger-order { grid-column: 1 / -1; } .private-log { grid-template-columns: 1fr; gap: 3px; } }
+@media (max-width: 700px) { .game-ledger { grid-template-columns: 1fr 1fr; } .ledger-order { grid-column: 1 / -1; } .private-log { grid-template-columns: 1fr; gap: 3px; } .player-voice-sliders { grid-template-columns: 1fr; gap: 4px; } }
 @media (max-width: 600px) {
   .game-topbar { padding: 7px 9px; gap: 7px; flex-wrap: nowrap; overflow-x: auto; }
   .topbar-title, .ctrl-label, .room-config-tag { display: none; }

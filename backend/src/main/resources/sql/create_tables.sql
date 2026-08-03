@@ -69,3 +69,10 @@ CREATE TABLE IF NOT EXISTS game_record (
   KEY idx_room_id (room_id),
   KEY idx_day_phase (room_id, day_number, phase)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS game_state_snapshot (
+  room_id BIGINT(20) NOT NULL,
+  state_json LONGTEXT NOT NULL,
+  update_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (room_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
