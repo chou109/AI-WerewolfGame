@@ -297,7 +297,7 @@
     <el-dialog v-model="playerVoiceDialogVisible" :title="voiceEditingPlayer ? `${voiceEditingPlayer.playerNumber}号 ${voiceEditingPlayer.playerName} · 单独语音配置` : '单独语音配置'" width="520px" class="player-voice-dialog">
       <el-form :model="playerVoiceDraft" label-position="top">
         <div class="voice-switch-row">
-          <div><strong>继承全局语音</strong><span>开启后使用“语音配置”页面中的统一设置</span></div>
+          <div><strong>继承 AI 默认语音</strong><span>优先使用 AI 玩家列表中的语音设置；未设置时继承全局语音</span></div>
           <el-switch v-model="playerVoiceDraft.inherit" />
         </div>
         <template v-if="!playerVoiceDraft.inherit">
@@ -424,6 +424,7 @@ const voiceEditingPlayer = ref(null)
 const browserVoices = ref([])
 const playerVoiceDraft = reactive({ inherit: true, enabled: true, engine: 'browser', voiceURI: '', cloudVoice: 'alloy', rate: 1, pitch: 1, volume: 1 })
 const playerVoiceConfigs = reactive({})
+const aiProfileVoiceConfigs = reactive({})
 const dialogContentRef = ref(null)
 const dialogMessages = ref([])
 const inputMessage = ref('')
@@ -501,6 +502,7 @@ watch(typewriterSpeed, v => { localStorage.setItem('typewriterSpeed', v); setSpe
 setSpeed(typewriterSpeed.value)
 
 const playerVoiceStorageKey = `werewolf:player-voices:${roomId}`
+const AI_VOICE_STORAGE_KEY = 'werewolf:ai-voice-configs'
 const cloudPlayerVoices = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse', 'zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'zh-CN-YunjianNeural', 'en-US-JennyNeural', 'en-US-GuyNeural']
 const loadPlayerVoiceConfigs = () => {
   try {
@@ -511,6 +513,14 @@ const loadPlayerVoiceConfigs = () => {
   }
 }
 const savePlayerVoiceConfigs = () => localStorage.setItem(playerVoiceStorageKey, JSON.stringify(playerVoiceConfigs))
+const loadAiProfileVoiceConfigs = () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AI_VOICE_STORAGE_KEY) || '{}')
+    Object.assign(aiProfileVoiceConfigs, saved && typeof saved === 'object' ? saved : {})
+  } catch {
+    Object.keys(aiProfileVoiceConfigs).forEach(key => delete aiProfileVoiceConfigs[key])
+  }
+}
 const createPlayerVoiceConfig = saved => ({
   inherit: saved?.inherit !== false,
   enabled: saved?.enabled !== false,
@@ -522,8 +532,14 @@ const createPlayerVoiceConfig = saved => ({
   volume: Math.min(1, Math.max(0, Number.isFinite(Number(saved?.volume)) ? Number(saved.volume) : 1))
 })
 const getPlayerVoiceOverrides = player => {
-  const config = playerVoiceConfigs[player?.id]
-  if (!config || config.inherit) return {}
+  const roomConfig = playerVoiceConfigs[player?.id]
+  const profileConfig = aiProfileVoiceConfigs[player?.aiPlayerId]
+  const config = roomConfig && !roomConfig.inherit
+    ? roomConfig
+    : profileConfig && !profileConfig.inherit
+      ? profileConfig
+      : null
+  if (!config) return {}
   return {
     enabled: config.enabled,
     engine: config.engine,
@@ -554,7 +570,7 @@ const testPlayerVoice = async () => {
   if (!player) return
   stopSpeaking()
   const overrides = playerVoiceDraft.inherit
-    ? { force: true, speaker: 'player' }
+    ? { ...getPlayerVoiceOverrides(player), force: true, speaker: 'player' }
     : { ...getPlayerVoiceOverrides({ id: '__draft__' }), force: true, speaker: 'player' }
   if (!playerVoiceDraft.inherit) Object.assign(overrides, {
     enabled: playerVoiceDraft.enabled,
@@ -2933,6 +2949,7 @@ const runGameLoop = async (version, initialStage = 'night') => {
 
 onMounted(async () => {
   loadPlayerVoiceConfigs()
+  loadAiProfileVoiceConfigs()
   loadBrowserVoices()
   window.speechSynthesis?.addEventListener('voiceschanged', loadBrowserVoices)
   const restored = await loadGameData({ restore: true })

@@ -66,10 +66,11 @@
             <span class="availability" :class="{ offline: scope.row.status !== 1 }"><i></i>{{ scope.row.status === 1 ? $t('common.enabled') : $t('common.disabled') }}</span>
           </template>
         </el-table-column>
-        <el-table-column :label="$t('aiPlayer.action')" width="144" fixed="right">
+        <el-table-column :label="$t('aiPlayer.action')" width="218" fixed="right">
           <template #default="scope">
             <div class="table-actions">
               <el-button type="primary" size="small" @click="editAiPlayer(scope.row)">{{ $t('common.edit') }}</el-button>
+              <el-button size="small" @click="openVoiceConfig(scope.row)">{{ $locale === 'zh-CN' ? '语音' : 'Voice' }}</el-button>
               <el-button type="danger" size="small" @click="deleteAiPlayer(scope.row.id)">{{ $t('common.delete') }}</el-button>
             </div>
           </template>
@@ -210,14 +211,63 @@
         </span>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="voiceDialogVisible" :title="voicePlayer ? `${voicePlayer.name} · 独立语音配置` : '独立语音配置'" width="520px">
+      <el-form :model="voiceForm" label-position="top">
+        <div class="voice-switch-row">
+          <div><strong>继承全局语音</strong><span>使用“语音配置”页面中的统一引擎、音色和播放参数</span></div>
+          <el-switch v-model="voiceForm.inherit" />
+        </div>
+        <template v-if="!voiceForm.inherit">
+          <div class="voice-switch-row">
+            <div><strong>启用该 AI 的语音</strong><span>只影响当前 AI 玩家</span></div>
+            <el-switch v-model="voiceForm.enabled" />
+          </div>
+          <el-form-item label="语音引擎">
+            <el-radio-group v-model="voiceForm.engine">
+              <el-radio-button value="browser">浏览器语音</el-radio-button>
+              <el-radio-button value="cloud">云端语音</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="voiceForm.engine === 'browser'" label="音色">
+            <el-select v-model="voiceForm.voiceURI" clearable filterable placeholder="自动选择匹配发言语言的音色" style="width:100%">
+              <el-option v-for="voice in browserVoices" :key="voice.voiceURI" :label="`${voice.name} (${voice.lang})`" :value="voice.voiceURI" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-else label="云端音色">
+            <el-select v-model="voiceForm.cloudVoice" filterable allow-create default-first-option placeholder="选择或输入音色名称" style="width:100%">
+              <el-option v-for="voice in cloudVoiceOptions" :key="voice" :label="voice" :value="voice" />
+            </el-select>
+            <span class="field-hint">服务商、接口地址和密钥仍使用全局云端语音配置。</span>
+          </el-form-item>
+          <div class="voice-sliders">
+            <el-form-item label="语速">
+              <div class="voice-slider"><el-slider v-model="voiceForm.rate" :min="0.5" :max="2" :step="0.1" /><span>{{ voiceForm.rate.toFixed(1) }}x</span></div>
+            </el-form-item>
+            <el-form-item label="音调">
+              <div class="voice-slider"><el-slider v-model="voiceForm.pitch" :min="0.5" :max="2" :step="0.1" :disabled="voiceForm.engine === 'cloud'" /><span>{{ voiceForm.pitch.toFixed(1) }}</span></div>
+            </el-form-item>
+            <el-form-item label="音量">
+              <div class="voice-slider"><el-slider v-model="voiceForm.volume" :min="0" :max="1" :step="0.1" /><span>{{ Math.round(voiceForm.volume * 100) }}%</span></div>
+            </el-form-item>
+          </div>
+        </template>
+      </el-form>
+      <template #footer>
+        <el-button @click="testVoiceConfig">试听</el-button>
+        <el-button @click="voiceDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveVoiceConfig">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed, watch, getCurrentInstance } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, computed, watch, getCurrentInstance } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
+import { speakText, stopSpeaking } from '../composables/useSpeechSynthesis.js'
 
 const { proxy } = getCurrentInstance()
 const $t = proxy.$t
@@ -236,6 +286,60 @@ const fetchingModels = ref(false)
 const testingConnection = ref(false)
 const connectionStatus = ref('') // '', 'success', 'failed'
 const selectedPreset = ref('')
+const voiceDialogVisible = ref(false)
+const voicePlayer = ref(null)
+const browserVoices = ref([])
+const voiceForm = reactive({ inherit: true, enabled: true, engine: 'browser', voiceURI: '', cloudVoice: 'alloy', rate: 1, pitch: 1, volume: 1 })
+const AI_VOICE_STORAGE_KEY = 'werewolf:ai-voice-configs'
+const cloudVoiceOptions = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse', 'zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'zh-CN-YunjianNeural', 'en-US-JennyNeural', 'en-US-GuyNeural']
+
+const createVoiceConfig = saved => ({
+  inherit: saved?.inherit !== false,
+  enabled: saved?.enabled !== false,
+  engine: saved?.engine === 'cloud' ? 'cloud' : 'browser',
+  voiceURI: saved?.voiceURI || '',
+  cloudVoice: saved?.cloudVoice || 'alloy',
+  rate: Math.min(2, Math.max(0.5, Number(saved?.rate) || 1)),
+  pitch: Math.min(2, Math.max(0.5, Number(saved?.pitch) || 1)),
+  volume: Math.min(1, Math.max(0, Number.isFinite(Number(saved?.volume)) ? Number(saved.volume) : 1))
+})
+const readAiVoiceConfigs = () => {
+  try { return JSON.parse(localStorage.getItem(AI_VOICE_STORAGE_KEY) || '{}') }
+  catch { return {} }
+}
+const loadBrowserVoices = () => {
+  if (!window.speechSynthesis) return
+  browserVoices.value = window.speechSynthesis.getVoices()
+}
+const openVoiceConfig = player => {
+  voicePlayer.value = player
+  Object.assign(voiceForm, createVoiceConfig(readAiVoiceConfigs()[player.id]))
+  voiceDialogVisible.value = true
+}
+const saveVoiceConfig = () => {
+  if (!voicePlayer.value) return
+  const configs = readAiVoiceConfigs()
+  configs[voicePlayer.value.id] = createVoiceConfig(voiceForm)
+  localStorage.setItem(AI_VOICE_STORAGE_KEY, JSON.stringify(configs))
+  ElMessage.success(`${voicePlayer.value.name}的独立语音配置已保存`)
+  voiceDialogVisible.value = false
+}
+const testVoiceConfig = async () => {
+  if (!voicePlayer.value) return
+  stopSpeaking()
+  const overrides = voiceForm.inherit ? {} : {
+    enabled: voiceForm.enabled,
+    engine: voiceForm.engine,
+    voiceURI: voiceForm.voiceURI,
+    rate: voiceForm.rate,
+    pitch: voiceForm.pitch,
+    volume: voiceForm.volume,
+    readPlayers: true,
+    cloud: { playerVoice: voiceForm.cloudVoice, speed: voiceForm.rate }
+  }
+  await speakText(`${voicePlayer.value.name}语音测试。`, { ...overrides, force: true, interrupt: true, speaker: 'player', lang: voicePlayer.value.language || 'zh-CN' })
+    .catch(error => ElMessage.error(`试听失败：${error.message || '语音引擎不可用'}`))
+}
 
 const splitTags = (value) => String(value || '')
   .split(/[、,，;；]/)
@@ -401,7 +505,15 @@ const aiPlayerRules = {
   apiKey: [{ required: true, message: () => $t('aiPlayer.apiKeyRequired'), trigger: 'blur' }]
 }
 
-onMounted(() => { fetchAiPlayers() })
+onMounted(() => {
+  fetchAiPlayers()
+  loadBrowserVoices()
+  window.speechSynthesis?.addEventListener('voiceschanged', loadBrowserVoices)
+})
+onUnmounted(() => {
+  window.speechSynthesis?.removeEventListener('voiceschanged', loadBrowserVoices)
+  stopSpeaking()
+})
 
 const fetchAiPlayers = async () => {
   try {
@@ -652,6 +764,14 @@ const fetchModelList = async () => {
 .temperature-control :deep(.el-slider__bar) { height: 6px; background: #d9b55d !important; }
 .temperature-control :deep(.el-slider__button) { width: 16px; height: 16px; background: #f3dfaa; }
 .dialog-footer { display: flex; justify-content: flex-end; }
+.voice-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; padding: 12px 14px; border: 1px solid rgba(180, 204, 222, .15); border-radius: 6px; background: rgba(5, 12, 19, .34); }
+.voice-switch-row strong, .voice-switch-row span { display: block; }
+.voice-switch-row strong { color: #e8eef3; font-size: 13px; }
+.voice-switch-row span { margin-top: 4px; color: #8294a3; font-size: 12px; }
+.voice-sliders { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.voice-slider { display: flex; align-items: center; gap: 8px; }
+.voice-slider :deep(.el-slider) { flex: 1; min-width: 70px; }
+.voice-slider > span { min-width: 36px; color: #e4bd65; font-size: 12px; text-align: right; }
 
-@media (max-width: 850px) { .manager-intro { display: block; }.create-player-button { margin-top: 24px; }.defaults-form { grid-template-columns: 1fr; }.defaults-action { justify-self: start; } }
+@media (max-width: 850px) { .manager-intro { display: block; }.create-player-button { margin-top: 24px; }.defaults-form { grid-template-columns: 1fr; }.defaults-action { justify-self: start; }.voice-sliders { grid-template-columns: 1fr; gap: 4px; } }
 </style>
