@@ -18,11 +18,18 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
+import javax.servlet.http.HttpServletRequest;
 
 /**
  * Cloud speech proxy. API keys are accepted through a request header for one-off
@@ -44,6 +51,15 @@ public class VoiceController {
     @Value("${voice.cloud.azure.base-url:}")
     private String azureBaseUrl;
 
+    @Value("${voice.cloud.rate-limit-per-minute:120}")
+    private int rateLimitPerMinute;
+
+    private static final Set<String> BLOCKED_HOST_SUFFIXES = new HashSet<>(Arrays.asList(
+            ".local", ".internal", ".localhost", ".lan", ".home", ".test", ".example"
+    ));
+
+    private final ConcurrentMap<String, long[]> rateBuckets = new ConcurrentHashMap<>();
+
     @GetMapping("/status")
     public Map<String, Object> status() {
         Map<String, Object> data = new HashMap<>();
@@ -56,7 +72,9 @@ public class VoiceController {
     @PostMapping(value = "/synthesize", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<byte[]> synthesize(
             @RequestBody Map<String, Object> request,
-            @RequestHeader(value = "X-Voice-Api-Key", required = false) String requestApiKey) {
+            @RequestHeader(value = "X-Voice-Api-Key", required = false) String requestApiKey,
+            HttpServletRequest httpRequest) {
+        checkRateLimit(httpRequest);
         String text = stringValue(request.get("text"));
         if (!hasText(text)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "语音文本不能为空");
@@ -151,11 +169,91 @@ public class VoiceController {
     private void validateEndpoint(String endpoint) {
         try {
             URI uri = new URI(endpoint);
-            if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme())) || !hasText(uri.getHost())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "云端语音 API 地址必须是有效的 HTTP 或 HTTPS 地址");
+            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
+            if (!"http".equals(scheme) && !"https".equals(scheme)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "云端语音 API 地址必须是 HTTP 或 HTTPS 地址");
+            }
+            String host = uri.getHost();
+            if (!hasText(host)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "云端语音 API 地址缺少主机名");
+            }
+            if (isBlockedHost(host)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "云端语音 API 地址不允许指向本机、内网或保留地址");
             }
         } catch (URISyntaxException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "云端语音 API 地址格式不正确", exception);
+        }
+    }
+
+    private boolean isBlockedHost(String host) {
+        String normalized = host.replace("[", "").replace("]", "").toLowerCase();
+        if ("localhost".equals(normalized)) {
+            return true;
+        }
+        for (String suffix : BLOCKED_HOST_SUFFIXES) {
+            if (normalized.endsWith(suffix)) {
+                return true;
+            }
+        }
+        try {
+            InetAddress[] addresses = InetAddress.getAllByName(normalized);
+            for (InetAddress address : addresses) {
+                if (isReservedAddress(address)) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+            // 解析失败留给连接阶段报错
+        }
+        return false;
+    }
+
+    private boolean isReservedAddress(InetAddress address) {
+        if (address.isAnyLocalAddress() || address.isLoopbackAddress()
+                || address.isLinkLocalAddress() || address.isSiteLocalAddress()
+                || address.isMulticastAddress()) {
+            return true;
+        }
+        byte[] bytes = address.getAddress();
+        if (bytes != null && bytes.length == 16) {
+            // fc00::/7 唯一本地地址
+            if ((bytes[0] & 0xFE) == 0xFC) {
+                return true;
+            }
+            // fe80::/10 链路本地（双保险）
+            if ((bytes[0] & 0xFF) == 0xFE && (bytes[1] & 0xC0) == 0x80) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void checkRateLimit(HttpServletRequest httpRequest) {
+        if (rateLimitPerMinute <= 0 || httpRequest == null) {
+            return;
+        }
+        String clientKey = httpRequest.getRemoteAddr();
+        long now = System.currentTimeMillis();
+        long[] bucket = rateBuckets.get(clientKey);
+        if (bucket == null) {
+            bucket = new long[]{now, 0};
+            long[] existing = rateBuckets.putIfAbsent(clientKey, bucket);
+            if (existing != null) {
+                bucket = existing;
+            }
+        }
+        synchronized (bucket) {
+            if (now - bucket[0] >= 60_000L) {
+                bucket[0] = now;
+                bucket[1] = 0;
+            }
+            bucket[1]++;
+            if (bucket[1] > rateLimitPerMinute) {
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "语音请求过于频繁，请稍后再试");
+            }
+        }
+        if (rateBuckets.size() > 10000) {
+            rateBuckets.clear();
         }
     }
 

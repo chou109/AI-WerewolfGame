@@ -62,7 +62,14 @@ mybatis-plus:
     enable-sql-runner: true
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    # 生产环境关闭 SQL 标准输出，避免每一条 SQL 都打印到控制台/日志
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+# 应用配置
+app:
+  cors:
+    # 允许跨域访问的前端来源（逗号分隔）。部署到其他域名/端口时在这里添加。
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
 
 # JWT配置
 jwt:
@@ -89,6 +96,8 @@ logging:
 # 云端语音代理配置。建议通过环境变量注入密钥，不要把真实密钥提交到仓库。
 voice:
   cloud:
+    # 每个 IP 每分钟最多请求云端语音的次数，0 表示不限制
+    rate-limit-per-minute: ${VOICE_RATE_LIMIT_PER_MINUTE:120}
     openai:
       api-key: ${VOICE_OPENAI_API_KEY:}
       base-url: ${VOICE_OPENAI_BASE_URL:https://api.openai.com/v1/audio/speech}
