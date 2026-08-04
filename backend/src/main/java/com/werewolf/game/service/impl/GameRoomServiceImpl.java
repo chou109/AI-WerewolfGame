@@ -9,6 +9,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
@@ -32,6 +35,11 @@ public class GameRoomServiceImpl extends ServiceImpl<GameRoomMapper, GameRoom> i
         // 生成唯一房间号
         String roomCode = generateRoomCode();
         gameRoom.setRoomCode(roomCode);
+        if (gameRoom.getPassword() != null && !gameRoom.getPassword().trim().isEmpty()) {
+            gameRoom.setPassword(hashRoomPassword(gameRoom.getPassword().trim()));
+        } else {
+            gameRoom.setPassword(null);
+        }
         gameRoom.setStatus(1); // 1-等待中
         gameRoom.setCreateTime(LocalDateTime.now());
         save(gameRoom);
@@ -119,5 +127,32 @@ public class GameRoomServiceImpl extends ServiceImpl<GameRoomMapper, GameRoom> i
      */
     private String generateRoomCode() {
         return String.format("%06d", (int) (Math.random() * 1000000));
+    }
+
+    @Override
+    public boolean verifyRoomPassword(Long roomId, String password) {
+        GameRoom room = getById(roomId);
+        if (room == null) {
+            return false;
+        }
+        if (room.getPassword() == null || room.getPassword().isEmpty()) {
+            return true;
+        }
+        return password != null && !password.trim().isEmpty()
+                && room.getPassword().equals(hashRoomPassword(password.trim()));
+    }
+
+    private String hashRoomPassword(String password) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(password.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(hash.length * 2);
+            for (byte value : hash) {
+                hex.append(String.format("%02x", value));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 不可用", exception);
+        }
     }
 }

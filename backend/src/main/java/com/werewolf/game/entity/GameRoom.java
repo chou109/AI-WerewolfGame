@@ -3,6 +3,8 @@ package com.werewolf.game.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -20,6 +22,10 @@ public class GameRoom implements Serializable {
     private Long id;
 
     private String roomCode;
+
+    /** 房间密码（SHA-256 哈希），仅服务端使用，绝不返回前端 */
+    @JsonIgnore
+    private String password;
 
     private String roomName;
 
@@ -40,4 +46,9 @@ public class GameRoom implements Serializable {
     private LocalDateTime endTime;
 
     private String winner;
+
+    @JsonProperty("hasPassword")
+    public boolean isHasPassword() {
+        return password != null && !password.isEmpty();
+    }
 }

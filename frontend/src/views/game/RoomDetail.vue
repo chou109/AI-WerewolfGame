@@ -8,7 +8,7 @@
           <span class="room-state"><i></i>{{ getStatus(room.status) }}</span>
           <span>{{ $t('gameBoard.' + room.gameBoard) }}</span>
           <span>{{ room.playerCount }} {{ $locale === 'zh-CN' ? '人局' : 'PLAYERS' }}</span>
-          <span v-if="room.roomCode">{{ $locale === 'zh-CN' ? '私密房间' : 'PRIVATE TABLE' }}</span>
+          <span>{{ room.hasPassword ? ($locale === 'zh-CN' ? '私密房间' : 'PRIVATE TABLE') : ($locale === 'zh-CN' ? '公开房间' : 'OPEN TABLE') }}</span>
         </div>
       </div>
       <div class="room-intro-actions">
@@ -30,7 +30,7 @@
               <span class="seat-number">{{ String(slot.number).padStart(2, '0') }}</span>
               <span class="seat-avatar">{{ slot.player.userId === -1 ? '✦' : '◌' }}</span>
               <div class="seat-copy"><b>{{ getPlayerName(slot.player) }}</b><small>{{ slot.player.userId === -1 ? 'AI PLAYER' : ($locale === 'zh-CN' ? '真人玩家' : 'HUMAN PLAYER') }}</small></div>
-              <button v-if="room.status === 1" class="remove-player" @click="deletePlayer(slot.player.id)" :aria-label="$t('roomDetail.deletePlayer')">×</button>
+              <button v-if="room.status === 1 && isOwner" class="remove-player" @click="deletePlayer(slot.player.id)" :aria-label="$t('roomDetail.deletePlayer')">×</button>
             </template>
             <template v-else>
               <span class="seat-number">{{ String(slot.number).padStart(2, '0') }}</span>
@@ -42,7 +42,7 @@
       </main>
 
       <aside class="room-sidebar">
-        <section v-if="room.status === 1" class="side-panel add-panel">
+        <section v-if="room.status === 1 && isOwner" class="side-panel add-panel">
           <span class="side-kicker">02 / {{ $locale === 'zh-CN' ? '邀请 AI' : 'INVITE AI' }}</span>
           <h3>{{ $t('roomDetail.addAiPlayer') }}</h3>
           <p>{{ $locale === 'zh-CN' ? '选择一位已配置的 AI 玩家，并安排其座位。' : 'Choose a configured AI player and assign an open seat.' }}</p>
@@ -73,7 +73,7 @@
           <span class="side-kicker">03 / {{ $locale === 'zh-CN' ? '游戏状态' : 'TABLE STATUS' }}</span>
           <h3>{{ canStart ? ($locale === 'zh-CN' ? '圆桌已就绪' : 'TABLE IS READY') : ($locale === 'zh-CN' ? '等待所有玩家' : 'WAITING FOR PLAYERS') }}</h3>
           <p>{{ canStart ? ($locale === 'zh-CN' ? '所有座位均已确认，可以开始本局游戏。' : 'Every seat is confirmed. The game can begin.') : ($locale === 'zh-CN' ? `还需要 ${Math.max(0, (room.playerCount || 0) - players.length)} 位玩家入座。` : `${Math.max(0, (room.playerCount || 0) - players.length)} more players are needed.`) }}</p>
-          <button class="start-game-button" :disabled="!canStart" @click="startGame"><span>✦</span>{{ $t('roomDetail.startGame') }}</button>
+          <button v-if="isOwner" class="start-game-button" :disabled="!canStart" @click="startGame"><span>✦</span>{{ $t('roomDetail.startGame') }}</button>
           <button class="leave-button" @click="leaveRoom">{{ $t('roomDetail.leaveRoom') }}</button>
         </section>
       </aside>
@@ -85,7 +85,8 @@
 import { ref, reactive, onMounted, computed, getCurrentInstance } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useGameStore } from '../../stores/game'
-import { ElMessage } from 'element-plus'
+import { useUserStore } from '../../stores/user'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 
 const { proxy } = getCurrentInstance()
@@ -94,6 +95,7 @@ const $locale = proxy.$locale
 const router = useRouter()
 const route = useRoute()
 const gameStore = useGameStore()
+const userStore = useUserStore()
 const room = reactive({})
 const players = ref([])
 const aiPlayers = ref([])
@@ -103,6 +105,7 @@ const adding = ref(false)
 const quickFilling = ref(false)
 
 const canStart = computed(() => room.status === 1 && room.playerCount === players.value.length)
+const isOwner = computed(() => Number(room.creatorId) === Number(userStore.userInfo?.id))
 const availableNums = computed(() => Array.from({ length: room.playerCount || 0 }, (_, index) => index + 1).filter(number => !players.value.some(player => player.playerNumber === number)))
 const availableAiPlayers = computed(() => aiPlayers.value.filter(ai => !players.value.some(player => player.aiPlayerId === ai.id)))
 const seatSlots = computed(() => Array.from({ length: room.playerCount || 0 }, (_, index) => ({ number: index + 1, player: players.value.find(player => player.playerNumber === index + 1) })))
@@ -174,7 +177,26 @@ const quickFillPlayers = async () => {
 }
 const startGame = async () => { if (!canStart.value) return; const success = await gameStore.startGame(route.params.id); if (success) { ElMessage.success($t('roomDetail.gameStarted')); router.push(`/game/play/${route.params.id}`) } else ElMessage.error($t('roomDetail.startFailed')) }
 const leaveRoom = async () => { await gameStore.leaveRoom(route.params.id); ElMessage.success($t('roomDetail.leftRoom')); router.push('/game/room/list') }
-const enterRoom = () => router.push(`/game/play/${route.params.id}`)
+const enterRoom = async () => {
+  if (room.hasPassword && !isOwner.value) {
+    try {
+      const { value } = await ElMessageBox.prompt($locale.value === 'zh-CN' ? '请输入房间密码' : 'Enter room password', $locale.value === 'zh-CN' ? '私密房间' : 'PRIVATE TABLE', {
+        confirmButtonText: $locale.value === 'zh-CN' ? '进入' : 'Enter',
+        cancelButtonText: $locale.value === 'zh-CN' ? '取消' : 'Cancel',
+        inputType: 'password',
+        inputValidator: input => (input ? true : ($locale.value === 'zh-CN' ? '请输入密码' : 'Password is required'))
+      })
+      const response = await axios.post('/game/room/verify', { roomId: route.params.id, password: value || '' })
+      if (response.data.code !== 200) {
+        ElMessage.error($locale.value === 'zh-CN' ? '房间密码错误' : 'Wrong room password')
+        return
+      }
+    } catch {
+      return
+    }
+  }
+  router.push(`/game/play/${route.params.id}`)
+}
 </script>
 
 <style scoped>

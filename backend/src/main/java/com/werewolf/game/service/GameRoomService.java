@@ -48,4 +48,9 @@ public interface GameRoomService extends IService<GameRoom> {
      * 删除房间
      */
     boolean deleteRoom(Long roomId);
+
+    /**
+     * 校验房间密码；无密码房间直接通过
+     */
+    boolean verifyRoomPassword(Long roomId, String password);
 }

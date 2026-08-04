@@ -3,8 +3,10 @@ package com.werewolf.game.controller;
 import com.werewolf.game.entity.GamePlayer;
 import com.werewolf.game.service.GamePlayerService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
 import com.werewolf.game.util.MapUtil;
@@ -18,6 +20,9 @@ public class GamePlayerController {
 
     @Autowired
     private GamePlayerService gamePlayerService;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /**
      * 获取房间玩家列表
@@ -45,8 +50,11 @@ public class GamePlayerController {
      * 添加玩家到房间
      */
     @PostMapping("/add")
-    public Map<String, Object> addPlayerToRoom(@RequestBody Map<String, Object> params) {
+    public Map<String, Object> addPlayerToRoom(@RequestBody Map<String, Object> params, HttpServletRequest request) {
         Long roomId = Long.parseLong(params.get("roomId").toString());
+        if (!isRoomOwner(roomId, request)) {
+            return MapUtil.of("code", 403, "message", "仅房主可以安排玩家入座");
+        }
         Long userId = Long.parseLong(params.get("userId").toString());
         Integer playerNumber = Integer.parseInt(params.get("playerNumber").toString());
         
@@ -62,8 +70,11 @@ public class GamePlayerController {
      * 更新玩家状态
      */
     @PutMapping("/updateStatus")
-    public Map<String, Object> updatePlayerStatus(@RequestBody Map<String, Object> params) {
+    public Map<String, Object> updatePlayerStatus(@RequestBody Map<String, Object> params, HttpServletRequest request) {
         Long playerId = Long.parseLong(params.get("playerId").toString());
+        if (!isRoomOwnerByPlayer(playerId, request)) {
+            return MapUtil.of("code", 403, "message", "仅房主可以修改玩家状态");
+        }
         Integer status = Integer.parseInt(params.get("status").toString());
         boolean result = gamePlayerService.updatePlayerStatus(playerId, status);
         if (result) {
@@ -77,8 +88,11 @@ public class GamePlayerController {
      * 更新玩家角色
      */
     @PutMapping("/updateRole")
-    public Map<String, Object> updatePlayerRole(@RequestBody Map<String, Object> params) {
+    public Map<String, Object> updatePlayerRole(@RequestBody Map<String, Object> params, HttpServletRequest request) {
         Long playerId = Long.parseLong(params.get("playerId").toString());
+        if (!isRoomOwnerByPlayer(playerId, request)) {
+            return MapUtil.of("code", 403, "message", "仅房主可以修改玩家角色");
+        }
         String role = params.get("role").toString();
         boolean result = gamePlayerService.updatePlayerRole(playerId, role);
         if (result) {
@@ -92,8 +106,11 @@ public class GamePlayerController {
      * 设置警长
      */
     @PutMapping("/setSheriff")
-    public Map<String, Object> setSheriff(@RequestBody Map<String, Object> params) {
+    public Map<String, Object> setSheriff(@RequestBody Map<String, Object> params, HttpServletRequest request) {
         Long roomId = Long.parseLong(params.get("roomId").toString());
+        if (!isRoomOwner(roomId, request)) {
+            return MapUtil.of("code", 403, "message", "仅房主可以设置警长");
+        }
         Long playerId = Long.parseLong(params.get("playerId").toString());
         boolean result = gamePlayerService.setSheriff(roomId, playerId);
         if (result) {
@@ -101,6 +118,35 @@ public class GamePlayerController {
         } else {
             return MapUtil.of("code", 400, "message", "设置失败");
         }
+    }
+
+    private boolean isRoomOwner(Long roomId, HttpServletRequest request) {
+        if (roomId == null || request == null) {
+            return false;
+        }
+        Object userId = request.getAttribute("userId");
+        if (userId == null) {
+            return false;
+        }
+        List<Long> creatorIds = jdbcTemplate.query(
+                "SELECT creator_id FROM game_room WHERE id = ?",
+                (resultSet, rowNum) -> resultSet.getLong("creator_id"),
+                roomId
+        );
+        return !creatorIds.isEmpty() && creatorIds.get(0) != null
+                && creatorIds.get(0).equals(Long.valueOf(userId.toString()));
+    }
+
+    private boolean isRoomOwnerByPlayer(Long playerId, HttpServletRequest request) {
+        if (playerId == null || request == null) {
+            return false;
+        }
+        List<Long> roomIds = jdbcTemplate.query(
+                "SELECT room_id FROM game_player WHERE id = ?",
+                (resultSet, rowNum) -> resultSet.getLong("room_id"),
+                playerId
+        );
+        return !roomIds.isEmpty() && isRoomOwner(roomIds.get(0), request);
     }
 
     /**
@@ -116,8 +162,11 @@ public class GamePlayerController {
      * 从房间移除玩家
      */
     @PostMapping("/remove")
-    public Map<String, Object> removePlayerFromRoom(@RequestBody Map<String, Object> params) {
+    public Map<String, Object> removePlayerFromRoom(@RequestBody Map<String, Object> params, HttpServletRequest request) {
         Long roomId = Long.parseLong(params.get("roomId").toString());
+        if (!isRoomOwner(roomId, request)) {
+            return MapUtil.of("code", 403, "message", "仅房主可以移除玩家");
+        }
         Long playerId = Long.parseLong(params.get("playerId").toString());
         boolean result = gamePlayerService.removePlayerFromRoom(roomId, playerId);
         if (result) {

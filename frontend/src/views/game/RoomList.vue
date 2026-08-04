@@ -26,11 +26,11 @@
         <div class="room-specs">
           <span><b>{{ room.playerCount }}</b>{{ $locale === 'zh-CN' ? ' 人局' : ' PLAYERS' }}</span>
           <span class="spec-rule"></span>
-          <span>{{ room.roomCode || ($locale === 'zh-CN' ? '未设密码' : 'OPEN TABLE') }}</span>
+          <span>{{ room.hasPassword ? ($locale === 'zh-CN' ? '私密' : 'PRIVATE') : ($locale === 'zh-CN' ? '公开' : 'OPEN') }}</span>
         </div>
         <div class="room-card-footer" @click.stop>
           <button class="room-enter" @click="joinRoom(room.id)">{{ $t('roomList.joinRoom') }} <span>→</span></button>
-          <button class="room-delete" @click="deleteRoom(room.id)" :aria-label="$t('roomList.deleteRoom')">×</button>
+          <button v-if="isOwner(room)" class="room-delete" @click="deleteRoom(room.id)" :aria-label="$t('roomList.deleteRoom')">×</button>
         </div>
       </article>
     </div>
@@ -48,6 +48,7 @@
 import { ref, onMounted, getCurrentInstance } from 'vue'
 import { useRouter } from 'vue-router'
 import { useGameStore } from '../../stores/game'
+import { useUserStore } from '../../stores/user'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 
@@ -56,6 +57,7 @@ const $t = proxy.$t
 const $locale = proxy.$locale
 const router = useRouter()
 const gameStore = useGameStore()
+const userStore = useUserStore()
 const rooms = ref([])
 
 onMounted(fetchRooms)
@@ -80,6 +82,8 @@ const getRoomSymbol = room => {
 const goToCreateRoom = () => router.push('/game/room/create')
 const joinRoom = id => router.push(`/game/room/${id}`)
 const viewRoom = id => router.push(`/game/room/${id}`)
+
+const isOwner = room => Number(room.creatorId) === Number(userStore.userInfo?.id)
 
 async function deleteRoom(id) {
   try {

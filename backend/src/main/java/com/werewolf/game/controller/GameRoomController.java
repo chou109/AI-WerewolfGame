@@ -38,6 +38,23 @@ public class GameRoomController {
     }
 
     /**
+     * 校验房间密码；无密码房间直接通过
+     */
+    @PostMapping("/verify")
+    public Map<String, Object> verifyRoomPassword(@RequestBody Map<String, Object> params) {
+        Long roomId = parseLong(params.get("roomId"));
+        String password = params.get("password") == null ? "" : params.get("password").toString();
+        if (roomId == null) {
+            return MapUtil.of("code", 400, "message", "房间编号无效");
+        }
+        boolean verified = gameRoomService.verifyRoomPassword(roomId, password);
+        if (verified) {
+            return MapUtil.of("code", 200, "message", "密码验证通过");
+        }
+        return MapUtil.of("code", 403, "message", "房间密码错误");
+    }
+
+    /**
      * 获取房间信息
      */
     @GetMapping("/info/{id}")
@@ -85,11 +102,14 @@ public class GameRoomController {
      * 更新房间状态
      */
     @PutMapping("/updateStatus")
-    public Map<String, Object> updateRoomStatus(@RequestBody Map<String, Object> params) {
+    public Map<String, Object> updateRoomStatus(@RequestBody Map<String, Object> params, HttpServletRequest request) {
         Long roomId = parseLong(params.get("roomId"));
         Integer status = parseInteger(params.get("status"));
         if (roomId == null || status == null) {
             return MapUtil.of("code", 400, "message", "房间状态参数不完整");
+        }
+        if (!isRoomOwner(roomId, request)) {
+            return MapUtil.of("code", 403, "message", "仅房主可以修改房间状态");
         }
         boolean result = gameRoomService.updateRoomStatus(roomId, status);
         if (result) {
@@ -103,9 +123,12 @@ public class GameRoomController {
      * 开始游戏
      */
     @PutMapping("/start")
-    public Map<String, Object> startGame(@RequestBody Map<String, Object> params) {
+    public Map<String, Object> startGame(@RequestBody Map<String, Object> params, HttpServletRequest request) {
         Long roomId = parseLong(params.get("roomId"));
         if (roomId == null) return MapUtil.of("code", 400, "message", "房间编号无效");
+        if (!isRoomOwner(roomId, request)) {
+            return MapUtil.of("code", 403, "message", "仅房主可以开始游戏");
+        }
         boolean result = gameRoomService.startGame(roomId);
         if (result) {
             return MapUtil.of("code", 200, "message", "游戏开始");
@@ -118,10 +141,13 @@ public class GameRoomController {
      * 结束游戏
      */
     @PutMapping("/end")
-    public Map<String, Object> endGame(@RequestBody Map<String, Object> params) {
+    public Map<String, Object> endGame(@RequestBody Map<String, Object> params, HttpServletRequest request) {
         Long roomId = parseLong(params.get("roomId"));
         String winner = params.get("winner") == null ? "" : params.get("winner").toString().trim();
         if (roomId == null || winner.isEmpty()) return MapUtil.of("code", 400, "message", "结束房间参数不完整");
+        if (!isRoomOwner(roomId, request)) {
+            return MapUtil.of("code", 403, "message", "仅房主可以结束游戏");
+        }
         boolean result = gameRoomService.endGame(roomId, winner);
         if (result) {
             return MapUtil.of("code", 200, "message", "游戏结束");
@@ -134,13 +160,29 @@ public class GameRoomController {
      * 删除房间
      */
     @DeleteMapping("/delete/{id}")
-    public Map<String, Object> deleteRoom(@PathVariable Long id) {
+    public Map<String, Object> deleteRoom(@PathVariable Long id, HttpServletRequest request) {
+        if (!isRoomOwner(id, request)) {
+            return MapUtil.of("code", 403, "message", "仅房主可以删除房间");
+        }
         boolean result = gameRoomService.deleteRoom(id);
         if (result) {
             return MapUtil.of("code", 200, "message", "房间删除成功");
         } else {
             return MapUtil.of("code", 400, "message", "房间删除失败");
         }
+    }
+
+    private boolean isRoomOwner(Long roomId, HttpServletRequest request) {
+        if (roomId == null || request == null) {
+            return false;
+        }
+        Object userId = request.getAttribute("userId");
+        if (userId == null) {
+            return false;
+        }
+        GameRoom room = gameRoomService.getById(roomId);
+        return room != null && room.getCreatorId() != null
+                && room.getCreatorId().equals(Long.valueOf(userId.toString()));
     }
 
     private Long parseLong(Object value) {
