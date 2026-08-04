@@ -63,6 +63,7 @@
 import { ref, reactive, computed, getCurrentInstance } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useGameStore } from '../../stores/game'
+import { BOARD_CONFIG_SCHEMA_VERSION } from '../../game/rules.js'
 import { ElMessage } from 'element-plus'
 
 const { proxy } = getCurrentInstance()
@@ -128,6 +129,7 @@ const createRoom = async () => {
       playerCount: Number(form.playerCount),
       gameBoard: form.gameBoard,
       password: form.password,
+      boardVersion: String(BOARD_CONFIG_SCHEMA_VERSION || 1),
       status: 1
     })
     loading.value = false

@@ -41,7 +41,8 @@ public class DatabaseInitializer {
 
                 ensureColumn(connection, "ai_player", "avatar_url", "LONGTEXT NULL");
                                 ensureColumn(connection, "game_state_snapshot", "saved_at", "BIGINT NOT NULL DEFAULT 0");
-                ensureColumn(connection, "game_room", "password", "VARCHAR(100) DEFAULT NULL");
+                                ensureColumn(connection, "game_room", "password", "VARCHAR(100) DEFAULT NULL");
+                ensureColumn(connection, "game_room", "board_version", "VARCHAR(20) DEFAULT '1'");
             } catch (Exception e) {
                 System.err.println("数据库初始化失败: " + e.getMessage());
                 e.printStackTrace();

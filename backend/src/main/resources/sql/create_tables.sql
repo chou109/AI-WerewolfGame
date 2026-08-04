@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS game_room (
   room_name VARCHAR(100) NOT NULL,
   player_count INT(11) DEFAULT 0,
   game_board TEXT DEFAULT NULL,
+  board_version VARCHAR(20) DEFAULT '1',
   status INT(11) DEFAULT 1,
   creator_id BIGINT(20) NOT NULL,
   create_time DATETIME DEFAULT CURRENT_TIMESTAMP,

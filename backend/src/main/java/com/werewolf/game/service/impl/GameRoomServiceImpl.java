@@ -40,6 +40,9 @@ public class GameRoomServiceImpl extends ServiceImpl<GameRoomMapper, GameRoom> i
         } else {
             gameRoom.setPassword(null);
         }
+        if (gameRoom.getBoardVersion() == null || gameRoom.getBoardVersion().trim().isEmpty()) {
+            gameRoom.setBoardVersion("1");
+        }
         gameRoom.setStatus(1); // 1-等待中
         gameRoom.setCreateTime(LocalDateTime.now());
         save(gameRoom);

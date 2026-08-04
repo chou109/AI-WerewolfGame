@@ -424,6 +424,7 @@ const isRoomOwner = computed(() => {
   const uid = Number(userStore.userInfo?.id)
   return uid > 0 && Number(roomInfo.value.creatorId) === uid
 })
+const boardConfigOverrides = ref(null)
 const roleDealVisible = ref(false)
 const roleDealStage = ref('shuffle')
 const roleDealMessage = ref('身份牌洗牌中')
@@ -637,7 +638,10 @@ const playerVoiceLanguageOptions = computed(() => {
 const playerVoiceGroups = computed(() => groupVoicesByLanguage(browserVoices.value, playerVoiceLanguageFilter.value, currentLocale()))
 const alivePlayers = computed(() => players.value.filter(p => p.isAlive))
 const wolfRolesArr = WOLF_TEAM_ROLES
-const boardRules = computed(() => getBoardRules(roomInfo.value.gameBoard || route.query.gameBoard, roomInfo.value.playerCount || 12))
+const boardRules = computed(() => {
+  if (boardConfigOverrides.value && Array.isArray(boardConfigOverrides.value.roles)) return boardConfigOverrides.value
+  return getBoardRules(roomInfo.value.gameBoard || route.query.gameBoard, roomInfo.value.playerCount || 12)
+})
 const allBoardRoleNames = [...new Set(Object.values(BOARD_RULES).flatMap(rule => rule.roles.map(item => item.role)))].sort((a, b) => b.length - a.length)
 const boardRoleNames = computed(() => new Set([
   ...boardRules.value.roles.map(item => item.role),
@@ -1189,6 +1193,22 @@ const loadGameData = async (options = {}) => {
     let room = rr.data.code === 200 ? rr.data.data : rr.data
     if (room) {
       roomInfo.value = room
+      try {
+        const boardKey = room.gameBoard || route.query.gameBoard
+        if (boardKey) {
+          const br = await axios.get(`/game/board/${boardKey}`)
+          const payload = br.data?.code === 200 ? br.data.data : null
+          if (payload?.board && Array.isArray(payload.board.roles)) {
+            boardConfigOverrides.value = payload.board
+            const roomVersion = String(room.boardVersion || payload.schemaVersion)
+            if (String(payload.schemaVersion) !== roomVersion) {
+              ElMessage.warning(currentLocale() === 'zh-CN'
+                ? '板子配置版本已更新，与创建房间时不一致，请留意规则变化。'
+                : 'Board config version changed since this room was created.')
+            }
+          }
+        }
+      } catch {}
       try {
         const pr = await axios.get(`/game/player/list/${roomId}`)
         let pl = pr.data.code === 200 ? pr.data.data : (Array.isArray(pr.data) ? pr.data : [])

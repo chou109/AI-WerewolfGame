@@ -33,6 +33,9 @@ public class GameRoom implements Serializable {
 
     private String gameBoard;
 
+    /** 创建房间时锁定的板子规则版本（对应 board_configs.json 的 schemaVersion） */
+    private String boardVersion;
+
     private Integer status;
 
     private Long creatorId;
