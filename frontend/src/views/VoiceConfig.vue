@@ -43,15 +43,25 @@
 
         <template v-if="voiceConfig.engine === 'browser'">
           <el-alert class="voice-note" :title="$t('voiceConfig.localNote')" type="info" :closable="false" show-icon />
+          <el-form-item class="voice-language-filter" :label="$t('voiceConfig.voiceLanguage')">
+            <el-select v-model="voiceLanguageFilter" :placeholder="$t('voiceConfig.voiceLanguagePlaceholder')" style="width: 100%">
+              <el-option :label="$t('voiceConfig.allLanguages')" value="all" />
+              <el-option v-for="option in voiceLanguageOptions" :key="option.key" :label="`${option.label} (${option.count})`" :value="option.key" />
+            </el-select>
+          </el-form-item>
           <div class="field-grid">
             <el-form-item :label="$t('voiceConfig.playerVoice')">
               <el-select v-model="voiceConfig.voiceURI" :placeholder="$t('voiceConfig.voicePlaceholder')" :disabled="!speechSupported || !voices.length" style="width: 100%">
-                <el-option v-for="voice in voices" :key="voice.voiceURI" :label="voiceLabel(voice)" :value="voice.voiceURI" />
+                <el-option-group v-for="group in browserVoiceGroups" :key="`player-${group.key}`" :label="group.label">
+                  <el-option v-for="voice in group.voices" :key="voice.voiceURI" :label="voiceLabel(voice)" :value="voice.voiceURI" />
+                </el-option-group>
               </el-select>
             </el-form-item>
             <el-form-item :label="$t('voiceConfig.refereeVoice')">
               <el-select v-model="voiceConfig.refereeVoiceURI" clearable :placeholder="$t('voiceConfig.sameAsPlayer')" :disabled="!speechSupported || !voices.length" style="width: 100%">
-                <el-option v-for="voice in voices" :key="`referee-${voice.voiceURI}`" :label="voiceLabel(voice)" :value="voice.voiceURI" />
+                <el-option-group v-for="group in browserVoiceGroups" :key="`referee-${group.key}`" :label="group.label">
+                  <el-option v-for="voice in group.voices" :key="`referee-${voice.voiceURI}`" :label="voiceLabel(voice)" :value="voice.voiceURI" />
+                </el-option-group>
               </el-select>
             </el-form-item>
           </div>
@@ -158,12 +168,14 @@
 import { ref, reactive, computed, onMounted, onUnmounted, getCurrentInstance } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import { DEFAULT_VOICE_CONFIG, isSpeechSynthesisSupported, loadVoiceConfig, saveVoiceConfig as persistVoiceConfig, speakText, stopSpeaking } from '../composables/useSpeechSynthesis.js'
+import { DEFAULT_VOICE_CONFIG, getVoiceLanguageKey, getVoiceLanguageLabel, groupVoicesByLanguage, isSpeechSynthesisSupported, loadVoiceConfig, saveVoiceConfig as persistVoiceConfig, speakText, stopSpeaking } from '../composables/useSpeechSynthesis.js'
 
 const { proxy } = getCurrentInstance()
 const $t = proxy.$t
+const $locale = proxy.$locale
 const speechSupported = ref(isSpeechSynthesisSupported())
 const voices = ref([])
+const voiceLanguageFilter = ref('all')
 const testing = ref(false)
 const backendStatus = ref({ openaiConfigured: false, azureConfigured: false })
 const proxyReachable = ref(false)
@@ -189,10 +201,23 @@ const endpointPlaceholder = computed(() => voiceConfig.cloud.provider === 'azure
   ? 'https://eastasia.tts.speech.microsoft.com/cognitiveservices/v1'
   : (voiceConfig.cloud.provider === 'custom' ? 'https://example.com/v1/audio/speech' : 'https://api.openai.com/v1/audio/speech'))
 const endpointHint = computed(() => voiceConfig.cloud.provider === 'azure' ? $t('voiceConfig.azureEndpointHint') : $t('voiceConfig.openAiEndpointHint'))
+const currentLocale = computed(() => (typeof $locale === 'string' ? $locale : $locale?.value) || 'zh-CN')
+const voiceLanguageOptions = computed(() => {
+  const counts = new Map()
+  voices.value.forEach(voice => {
+    const key = getVoiceLanguageKey(voice)
+    counts.set(key, (counts.get(key) || 0) + 1)
+  })
+  return [...counts.entries()]
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([key, count]) => ({ key, label: getVoiceLanguageLabel(key, currentLocale.value), count }))
+})
+const browserVoiceGroups = computed(() => groupVoicesByLanguage(voices.value, voiceLanguageFilter.value, currentLocale.value))
 
 const loadVoices = () => {
   if (!speechSupported.value) return
   voices.value = window.speechSynthesis.getVoices()
+  if (voiceLanguageFilter.value !== 'all' && !voiceLanguageOptions.value.some(option => option.key === voiceLanguageFilter.value)) voiceLanguageFilter.value = 'all'
   if (!voiceConfig.voiceURI && voices.value.length) {
     const preferred = voices.value.find(voice => voice.lang?.toLowerCase().startsWith('zh')) || voices.value[0]
     voiceConfig.voiceURI = preferred.voiceURI
@@ -278,6 +303,7 @@ onUnmounted(() => {
 .support-status.supported, .cloud-status.configured { color: #9bd09f; }
 .support-status.supported i { background: #9bd09f; }
 .config-card, .cloud-card { border-color: rgba(180, 204, 222, .18) !important; background: linear-gradient(155deg, #101d2a, #0b141f) !important; }
+.voice-language-filter { margin-bottom: 18px; }
 .cloud-card { margin-top: 18px; }
 .config-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .config-header h3 { margin: 8px 0 0; color: #eff5fa; font-size: 21px; letter-spacing: 0; }

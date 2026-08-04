@@ -312,8 +312,14 @@
             </el-radio-group>
           </el-form-item>
           <el-form-item v-if="playerVoiceDraft.engine === 'browser'" label="音色">
+            <el-select v-model="playerVoiceLanguageFilter" :placeholder="$t('voiceConfig.voiceLanguagePlaceholder')" style="width:100%; margin-bottom: 8px">
+              <el-option :label="$t('voiceConfig.allLanguages')" value="all" />
+              <el-option v-for="option in playerVoiceLanguageOptions" :key="option.key" :label="`${option.label} (${option.count})`" :value="option.key" />
+            </el-select>
             <el-select v-model="playerVoiceDraft.voiceURI" clearable filterable placeholder="自动选择匹配语言的音色" style="width:100%">
-              <el-option v-for="voice in browserVoices" :key="voice.voiceURI" :label="`${voice.name} (${voice.lang})`" :value="voice.voiceURI" />
+              <el-option-group v-for="group in playerVoiceGroups" :key="group.key" :label="group.label">
+                <el-option v-for="voice in group.voices" :key="voice.voiceURI" :label="`${voice.name} (${voice.lang})`" :value="voice.voiceURI" />
+              </el-option-group>
             </el-select>
           </el-form-item>
           <el-form-item v-else label="云端音色">
@@ -349,7 +355,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import { useTypewriter } from '../../composables/useTypewriter.js'
-import { speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from '../../composables/useSpeechSynthesis.js'
+import { getVoiceLanguageKey, getVoiceLanguageLabel, groupVoicesByLanguage, speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from '../../composables/useSpeechSynthesis.js'
 import { BOARD_RULES, PACK_WOLF_ROLES, WEREWOLF_KNOWLEDGE, WOLF_TEAM_ROLES, getBoardRules, getRoleSummary, isPackWolfRole, isWolfTeamRole } from '../../game/rules.js'
 
 const { proxy } = getCurrentInstance()
@@ -422,6 +428,7 @@ const typewriterSpeed = ref(localStorage.getItem('typewriterSpeed') || 'normal')
 const playerVoiceDialogVisible = ref(false)
 const voiceEditingPlayer = ref(null)
 const browserVoices = ref([])
+const playerVoiceLanguageFilter = ref('all')
 const playerVoiceDraft = reactive({ inherit: true, enabled: true, engine: 'browser', voiceURI: '', cloudVoice: 'alloy', rate: 1, pitch: 1, volume: 1 })
 const playerVoiceConfigs = reactive({})
 const aiProfileVoiceConfigs = reactive({})
@@ -598,9 +605,21 @@ const testPlayerVoice = async () => {
 const loadBrowserVoices = () => {
   if (typeof window === 'undefined' || !window.speechSynthesis) return
   browserVoices.value = window.speechSynthesis.getVoices()
+  if (playerVoiceLanguageFilter.value !== 'all' && !playerVoiceLanguageOptions.value.some(option => option.key === playerVoiceLanguageFilter.value)) playerVoiceLanguageFilter.value = 'all'
 }
 
 // Computed
+const playerVoiceLanguageOptions = computed(() => {
+  const counts = new Map()
+  browserVoices.value.forEach(voice => {
+    const key = getVoiceLanguageKey(voice)
+    counts.set(key, (counts.get(key) || 0) + 1)
+  })
+  return [...counts.entries()]
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([key, count]) => ({ key, label: getVoiceLanguageLabel(key, currentLocale()), count }))
+})
+const playerVoiceGroups = computed(() => groupVoicesByLanguage(browserVoices.value, playerVoiceLanguageFilter.value, currentLocale()))
 const alivePlayers = computed(() => players.value.filter(p => p.isAlive))
 const wolfRolesArr = WOLF_TEAM_ROLES
 const boardRules = computed(() => getBoardRules(roomInfo.value.gameBoard || route.query.gameBoard, roomInfo.value.playerCount || 12))

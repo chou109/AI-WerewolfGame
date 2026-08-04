@@ -45,6 +45,42 @@ export function isSpeechSynthesisSupported() {
     'SpeechSynthesisUtterance' in window
 }
 
+const normaliseVoiceLanguage = value => {
+  const raw = typeof value === 'string' ? value : value?.lang
+  return String(raw || '').trim().replace(/_/g, '-').toLowerCase() || 'und'
+}
+
+export function getVoiceLanguageKey(value) {
+  return normaliseVoiceLanguage(value).split('-')[0]
+}
+
+export function getVoiceLanguageLabel(language, locale = 'zh-CN') {
+  const key = String(language || 'und').toLowerCase()
+  if (key === 'und') return locale === 'en-US' ? 'Other languages' : '其他语言'
+  try {
+    return new Intl.DisplayNames([locale === 'en-US' ? 'en' : 'zh-CN'], { type: 'language' }).of(key) || key
+  } catch {
+    return key
+  }
+}
+
+export function groupVoicesByLanguage(voices, selectedLanguage = 'all', locale = 'zh-CN') {
+  const groups = new Map()
+  const filtered = (voices || []).filter(voice => selectedLanguage === 'all' || getVoiceLanguageKey(voice) === selectedLanguage)
+  filtered.forEach(voice => {
+    const localeCode = normaliseVoiceLanguage(voice)
+    if (!groups.has(localeCode)) groups.set(localeCode, [])
+    groups.get(localeCode).push(voice)
+  })
+  return [...groups.entries()]
+    .sort(([first], [second]) => first.localeCompare(second))
+    .map(([localeCode, groupVoices]) => ({
+      key: localeCode,
+      label: `${getVoiceLanguageLabel(localeCode, locale)} (${localeCode})`,
+      voices: groupVoices.slice().sort((first, second) => String(first.name || '').localeCompare(String(second.name || '')))
+    }))
+}
+
 export function loadVoiceConfig() {
   if (typeof localStorage === 'undefined') return cloneDefaults()
 
