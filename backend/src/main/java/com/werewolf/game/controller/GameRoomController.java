@@ -1,11 +1,13 @@
 package com.werewolf.game.controller;
 
 import com.werewolf.game.entity.GameRoom;
+import com.werewolf.game.service.GameLoopLeaseService;
 import com.werewolf.game.service.GameRoomService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import javax.servlet.http.HttpServletRequest;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import com.werewolf.game.util.MapUtil;
@@ -19,6 +21,9 @@ public class GameRoomController {
 
     @Autowired
     private GameRoomService gameRoomService;
+
+    @Autowired
+    private GameLoopLeaseService gameLoopLeaseService;
 
     /**
      * 创建游戏房间
@@ -169,6 +174,36 @@ public class GameRoomController {
             return MapUtil.of("code", 200, "message", "房间删除成功");
         } else {
             return MapUtil.of("code", 400, "message", "房间删除失败");
+        }
+    }
+
+    /**
+     * 游戏推进租约：防止多标签页/多端重复推进同一局。
+     * acquire/renew/release 仅房主可用，status 房间成员均可查询。
+     */
+    @PostMapping("/loopLock")
+    public Map<String, Object> loopLock(@RequestBody Map<String, Object> params, HttpServletRequest request) {
+        Long roomId = parseLong(params.get("roomId"));
+        String action = params.get("action") == null ? "" : params.get("action").toString().trim().toLowerCase();
+        String sessionId = params.get("sessionId") == null ? "" : params.get("sessionId").toString().trim();
+        if (roomId == null || sessionId.isEmpty()) {
+            return MapUtil.of("code", 400, "message", "租约参数不完整");
+        }
+        boolean writableAction = Arrays.asList("acquire", "renew", "release").contains(action);
+        if (writableAction && !isRoomOwner(roomId, request)) {
+            return MapUtil.of("code", 403, "message", "仅房主可以操作游戏推进租约");
+        }
+        switch (action) {
+            case "acquire":
+                return MapUtil.of("code", 200, "data", gameLoopLeaseService.acquire(roomId, sessionId));
+            case "renew":
+                return MapUtil.of("code", 200, "data", gameLoopLeaseService.renew(roomId, sessionId));
+            case "release":
+                return MapUtil.of("code", 200, "data", gameLoopLeaseService.release(roomId, sessionId));
+            case "status":
+                return MapUtil.of("code", 200, "data", gameLoopLeaseService.status(roomId));
+            default:
+                return MapUtil.of("code", 400, "message", "不支持的租约操作");
         }
     }
 

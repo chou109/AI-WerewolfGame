@@ -454,6 +454,9 @@ const speakingPlayer = ref(null)
 const speechOrder = ref([])
 const speechIndex = ref(-1)
 const phaseRunning = ref(false)
+const loopSessionId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `loop-${Date.now()}-${Math.random().toString(36).slice(2)}`
+let loopLeaseTimer = null
+let loopLeaseHeld = false
 const isGamePaused = ref(false)
 const speechTimeRemaining = ref(120)
 const speechPaused = ref(false)
@@ -1160,6 +1163,7 @@ const exitGame = () => {
     .then(() => {
       gameLoopVersion++
       phaseRunning.value = false
+      releaseLoopLease()
       isGamePaused.value = false
       releasePauseWaiters()
       closeSpeech('exit')
@@ -3444,9 +3448,52 @@ const saveLoopCheckpoint = stage => {
   persistGameSnapshot(stage)
 }
 
+const requestLoopLease = async action => {
+  if (!roomId) return null
+  try {
+    const response = await axios.post('/game/room/loopLock', { roomId, action, sessionId: loopSessionId })
+    return response.data?.code === 200 ? (response.data.data || null) : null
+  } catch (error) {
+    console.warn('游戏推进租约请求失败:', action, error.message)
+    return null
+  }
+}
+
+const acquireLoopLease = async () => {
+  if (!isRoomOwner.value) return true
+  const lease = await requestLoopLease('acquire')
+  if (lease === null) {
+    console.warn('无法确认游戏推进租约，本窗口将按唯一推进方运行。')
+    return true
+  }
+  if (!lease.acquired) {
+    ElMessage.warning('该房间已在其他窗口中运行游戏流程，本窗口将进入只读视角。')
+    return false
+  }
+  loopLeaseHeld = true
+  loopLeaseTimer = setInterval(() => { void requestLoopLease('renew') }, 10000)
+  return true
+}
+
+const releaseLoopLease = () => {
+  if (loopLeaseTimer) {
+    clearInterval(loopLeaseTimer)
+    loopLeaseTimer = null
+  }
+  if (loopLeaseHeld) {
+    loopLeaseHeld = false
+    void requestLoopLease('release')
+  }
+}
+
 const runGameLoop = async (version, initialStage = 'night') => {
   if (phaseRunning.value) return
   phaseRunning.value = true
+  const leaseOk = await acquireLoopLease()
+  if (!leaseOk) {
+    phaseRunning.value = false
+    return
+  }
   let stage = initialStage || 'night'
   await phaseDelay(500)
   try {
@@ -3518,6 +3565,7 @@ const runGameLoop = async (version, initialStage = 'night') => {
     addRefereeMessage('游戏流程发生异常，已暂停。', { visibility: 'public', detail: error.message })
   } finally {
     if (gameLoopVersion === version) phaseRunning.value = false
+    releaseLoopLease()
   }
 }
 
@@ -3541,6 +3589,7 @@ onUnmounted(() => {
   const shouldPersist = gameStarted.value
   gameLoopVersion++
   phaseRunning.value = false
+  releaseLoopLease()
   if (decisionWindowTimer) clearInterval(decisionWindowTimer)
   decisionWindowTimer = null
   decisionWindow.active = false
