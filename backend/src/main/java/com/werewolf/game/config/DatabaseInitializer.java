@@ -40,6 +40,13 @@ public class DatabaseInitializer {
                 }
 
                 ensureColumn(connection, "ai_player", "avatar_url", "LONGTEXT NULL");
+                ensureColumn(connection, "ai_player", "voice_enabled", "INT DEFAULT 1");
+                ensureColumn(connection, "ai_player", "voice_engine", "VARCHAR(20) DEFAULT 'browser'");
+                ensureColumn(connection, "ai_player", "voice_uri", "VARCHAR(255) DEFAULT ''");
+                ensureColumn(connection, "ai_player", "cloud_voice", "VARCHAR(60) DEFAULT 'alloy'");
+                ensureColumn(connection, "ai_player", "voice_rate", "DOUBLE DEFAULT 1");
+                ensureColumn(connection, "ai_player", "voice_pitch", "DOUBLE DEFAULT 1");
+                ensureColumn(connection, "ai_player", "voice_volume", "DOUBLE DEFAULT 1");
                                 ensureColumn(connection, "game_state_snapshot", "saved_at", "BIGINT NOT NULL DEFAULT 0");
                                 ensureColumn(connection, "game_room", "password", "VARCHAR(100) DEFAULT NULL");
                 ensureColumn(connection, "game_room", "board_version", "VARCHAR(20) DEFAULT '1'");

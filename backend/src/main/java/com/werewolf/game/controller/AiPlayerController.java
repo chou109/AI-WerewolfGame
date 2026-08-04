@@ -64,6 +64,30 @@ public class AiPlayerController {
     }
 
     /**
+     * 获取AI玩家语音配置
+     */
+    @GetMapping("/voice/{id}")
+    public Map<String, Object> getAiPlayerVoice(@PathVariable Long id) {
+        Map<String, Object> config = aiPlayerService.getVoiceConfig(id);
+        if (config != null) {
+            return MapUtil.of("code", 200, "data", config);
+        }
+        return MapUtil.of("code", 400, "message", "AI玩家不存在");
+    }
+
+    /**
+     * 更新AI玩家语音配置
+     */
+    @PutMapping("/voice/{id}")
+    public Map<String, Object> updateAiPlayerVoice(@PathVariable Long id, @RequestBody Map<String, Object> config) {
+        boolean result = aiPlayerService.updateVoiceConfig(id, config);
+        if (result) {
+            return MapUtil.of("code", 200, "message", "语音配置已保存");
+        }
+        return MapUtil.of("code", 400, "message", "语音配置保存失败");
+    }
+
+    /**
      * 删除AI玩家
      */
     @DeleteMapping("/delete/{id}")

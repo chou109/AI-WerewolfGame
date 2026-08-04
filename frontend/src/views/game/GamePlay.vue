@@ -554,13 +554,42 @@ const loadPlayerVoiceConfigs = () => {
   }
 }
 const savePlayerVoiceConfigs = () => localStorage.setItem(playerVoiceStorageKey, JSON.stringify(playerVoiceConfigs))
-const loadAiProfileVoiceConfigs = () => {
+const serverVoiceToLocal = server => createPlayerVoiceConfig({
+  inherit: false,
+  enabled: Number(server?.voiceEnabled ?? 1) !== 0,
+  engine: server?.voiceEngine || 'browser',
+  voiceURI: server?.voiceUri || '',
+  cloudVoice: server?.cloudVoice || 'alloy',
+  rate: Number(server?.voiceRate ?? 1),
+  pitch: Number(server?.voicePitch ?? 1),
+  volume: Number(server?.voiceVolume ?? 1)
+})
+const loadAiProfileVoiceConfigs = async () => {
   try {
     const saved = JSON.parse(localStorage.getItem(AI_VOICE_STORAGE_KEY) || '{}')
     Object.assign(aiProfileVoiceConfigs, saved && typeof saved === 'object' ? saved : {})
   } catch {
     Object.keys(aiProfileVoiceConfigs).forEach(key => delete aiProfileVoiceConfigs[key])
   }
+  const ids = new Set([
+    ...aiPlayers.value.map(ai => Number(ai.id)).filter(Boolean),
+    ...players.value.map(p => Number(p.aiPlayerId)).filter(Boolean)
+  ])
+  if (!ids.size) {
+    try {
+      const ar = await axios.get('/ai/player/available')
+      const list = ar.data.code === 200 ? ar.data.data : (Array.isArray(ar.data) ? ar.data : [])
+      list.forEach(ai => ids.add(Number(ai.id)))
+    } catch {}
+  }
+  await Promise.all([...ids].map(async id => {
+    try {
+      const response = await axios.get(`/ai/player/voice/${id}`)
+      if (response.data?.code === 200 && response.data.data) aiProfileVoiceConfigs[id] = serverVoiceToLocal(response.data.data)
+    } catch {
+      // 服务端不可用或 AI 不存在时保留本地缓存
+    }
+  }))
 }
 const createPlayerVoiceConfig = saved => ({
   inherit: saved?.inherit !== false,

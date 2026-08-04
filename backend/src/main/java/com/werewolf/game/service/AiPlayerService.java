@@ -30,6 +30,16 @@ public interface AiPlayerService extends IService<AiPlayer> {
     boolean updateAiPlayer(AiPlayer aiPlayer);
 
     /**
+     * 获取AI玩家语音配置（不存在返回 null）
+     */
+    java.util.Map<String, Object> getVoiceConfig(Long id);
+
+    /**
+     * 更新AI玩家语音配置
+     */
+    boolean updateVoiceConfig(Long id, java.util.Map<String, Object> config);
+
+    /**
      * 删除AI玩家
      */
     boolean deleteAiPlayer(Long id);

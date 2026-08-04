@@ -1,5 +1,6 @@
 package com.werewolf.game.controller;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -26,6 +27,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import com.werewolf.game.service.VoiceCacheService;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -58,6 +63,9 @@ public class VoiceController {
             ".local", ".internal", ".localhost", ".lan", ".home", ".test", ".example"
     ));
 
+    @Autowired(required = false)
+    private VoiceCacheService voiceCacheService;
+
     private final ConcurrentMap<String, long[]> rateBuckets = new ConcurrentHashMap<>();
 
     @GetMapping("/status")
@@ -66,6 +74,7 @@ public class VoiceController {
         data.put("openaiConfigured", hasText(openAiApiKey));
         data.put("azureConfigured", hasText(azureApiKey) && hasText(azureBaseUrl));
         data.put("proxyPath", "/api/voice/synthesize");
+        data.put("cacheEnabled", voiceCacheService != null);
         return response(200, data);
     }
 
@@ -130,6 +139,17 @@ public class VoiceController {
 
             validateEndpoint(endpoint);
 
+            String cacheKey = cacheKey(provider, endpoint, request, text);
+            if (voiceCacheService != null) {
+                byte[] cached = voiceCacheService.findAudio(cacheKey);
+                if (cached != null && cached.length > 0) {
+                    HttpHeaders cacheHeaders = new HttpHeaders();
+                    cacheHeaders.setContentType(audioType(stringValue(request.get("responseFormat"), "mp3")));
+                    cacheHeaders.setCacheControl("no-store");
+                    return new ResponseEntity<>(cached, cacheHeaders, HttpStatus.OK);
+                }
+            }
+
             RestTemplate restTemplate = restTemplate(timeout);
             ResponseEntity<byte[]> upstream = restTemplate.exchange(endpoint, HttpMethod.POST, entity, byte[].class);
             if (!upstream.getStatusCode().is2xxSuccessful() || upstream.getBody() == null || upstream.getBody().length == 0) {
@@ -139,11 +159,38 @@ public class VoiceController {
             MediaType contentType = upstream.getHeaders().getContentType();
             responseHeaders.setContentType(contentType == null ? audioType(stringValue(request.get("responseFormat"), "mp3")) : contentType);
             responseHeaders.setCacheControl("no-store");
+            if (voiceCacheService != null) {
+                voiceCacheService.saveAudio(cacheKey, provider, stringValue(request.get("voice"), "alloy"),
+                        stringValue(request.get("responseFormat"), "mp3"), upstream.getBody());
+            }
             return new ResponseEntity<>(upstream.getBody(), responseHeaders, HttpStatus.OK);
         } catch (ResponseStatusException exception) {
             throw exception;
         } catch (RestClientException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "云端语音请求失败：" + exception.getMessage(), exception);
+        }
+    }
+
+    private String cacheKey(String provider, String endpoint, Map<String, Object> request, String text) {
+        StringBuilder raw = new StringBuilder();
+        raw.append(provider).append('|')
+                .append(endpoint).append('|')
+                .append(stringValue(request.get("model"), "gpt-4o-mini-tts")).append('|')
+                .append(stringValue(request.get("voice"), "alloy")).append('|')
+                .append(stringValue(request.get("language"), "zh-CN")).append('|')
+                .append(stringValue(request.get("responseFormat"), "mp3")).append('|')
+                .append(String.format(java.util.Locale.US, "%.4f", numberValue(request.get("speed"), 1.0))).append('|')
+                .append(text.trim());
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(raw.toString().getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b & 0xff));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException exception) {
+            return String.valueOf(raw.toString().hashCode());
         }
     }
 

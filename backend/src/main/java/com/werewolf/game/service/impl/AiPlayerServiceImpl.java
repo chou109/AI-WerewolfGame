@@ -56,7 +56,42 @@ public class AiPlayerServiceImpl extends ServiceImpl<AiPlayerMapper, AiPlayer> i
     }
 
     @Override
+    public java.util.Map<String, Object> getVoiceConfig(Long id) {
+        AiPlayer player = getById(id);
+        if (player == null) {
+            return null;
+        }
+        java.util.Map<String, Object> config = new java.util.LinkedHashMap<>();
+        config.put("voiceEnabled", player.getVoiceEnabled() == null ? 1 : player.getVoiceEnabled());
+        config.put("voiceEngine", player.getVoiceEngine() == null ? "browser" : player.getVoiceEngine());
+        config.put("voiceUri", player.getVoiceUri() == null ? "" : player.getVoiceUri());
+        config.put("cloudVoice", player.getCloudVoice() == null ? "alloy" : player.getCloudVoice());
+        config.put("voiceRate", player.getVoiceRate() == null ? 1.0 : player.getVoiceRate());
+        config.put("voicePitch", player.getVoicePitch() == null ? 1.0 : player.getVoicePitch());
+        config.put("voiceVolume", player.getVoiceVolume() == null ? 1.0 : player.getVoiceVolume());
+        return config;
+    }
+
+    @Override
+    public boolean updateVoiceConfig(Long id, java.util.Map<String, Object> config) {
+        AiPlayer player = getById(id);
+        if (player == null || config == null) {
+            return false;
+        }
+        player.setVoiceEnabled(config.containsKey("voiceEnabled") ? Integer.valueOf(String.valueOf(config.get("voiceEnabled"))) : 1);
+        player.setVoiceEngine(config.containsKey("voiceEngine") ? String.valueOf(config.get("voiceEngine")) : "browser");
+        player.setVoiceUri(config.containsKey("voiceUri") ? String.valueOf(config.get("voiceUri")) : "");
+        player.setCloudVoice(config.containsKey("cloudVoice") ? String.valueOf(config.get("cloudVoice")) : "alloy");
+        player.setVoiceRate(config.containsKey("voiceRate") ? Double.valueOf(String.valueOf(config.get("voiceRate"))) : 1.0);
+        player.setVoicePitch(config.containsKey("voicePitch") ? Double.valueOf(String.valueOf(config.get("voicePitch"))) : 1.0);
+        player.setVoiceVolume(config.containsKey("voiceVolume") ? Double.valueOf(String.valueOf(config.get("voiceVolume"))) : 1.0);
+        player.setUpdateTime(LocalDateTime.now());
+        return updateById(player);
+    }
+
+    @Override
     public boolean deleteAiPlayer(Long id) {
         return removeById(id);
     }
+
 }

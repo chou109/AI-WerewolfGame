@@ -34,6 +34,15 @@ public class AiPlayer implements Serializable {
 
     private String avatarUrl;
 
+    /** AI 语音配置：是否启用、引擎、浏览器音色URI、云端音色、语速/音调/音量 */
+    private Integer voiceEnabled;
+    private String voiceEngine;
+    private String voiceUri;
+    private String cloudVoice;
+    private Double voiceRate;
+    private Double voicePitch;
+    private Double voiceVolume;
+
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String apiKey;
 

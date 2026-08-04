@@ -270,7 +270,7 @@
       <template #footer>
         <el-button @click="testVoiceConfig">试听</el-button>
         <el-button @click="voiceDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveVoiceConfig">保存</el-button>
+        <el-button type="primary" :loading="voiceSaving" @click="saveVoiceConfig">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -307,6 +307,7 @@ const voiceDialogVisible = ref(false)
 const voicePlayer = ref(null)
 const browserVoices = ref([])
 const voiceForm = reactive({ inherit: true, enabled: true, engine: 'browser', voiceURI: '', cloudVoice: 'alloy', rate: 1, pitch: 1, volume: 1 })
+const voiceSaving = ref(false)
 const AI_VOICE_STORAGE_KEY = 'werewolf:ai-voice-configs'
 const cloudVoiceOptions = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse', 'zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'zh-CN-YunjianNeural', 'en-US-JennyNeural', 'en-US-GuyNeural']
 
@@ -320,6 +321,25 @@ const createVoiceConfig = saved => ({
   pitch: Math.min(2, Math.max(0.5, Number(saved?.pitch) || 1)),
   volume: Math.min(1, Math.max(0, Number.isFinite(Number(saved?.volume)) ? Number(saved.volume) : 1))
 })
+const serverVoiceToLocal = server => createVoiceConfig({
+  inherit: false,
+  enabled: Number(server?.voiceEnabled ?? 1) !== 0,
+  engine: server?.voiceEngine || 'browser',
+  voiceURI: server?.voiceUri || '',
+  cloudVoice: server?.cloudVoice || 'alloy',
+  rate: Number(server?.voiceRate ?? 1),
+  pitch: Number(server?.voicePitch ?? 1),
+  volume: Number(server?.voiceVolume ?? 1)
+})
+const localVoiceToServer = config => ({
+  voiceEnabled: config.enabled ? 1 : 0,
+  voiceEngine: config.engine === 'cloud' ? 'cloud' : 'browser',
+  voiceUri: config.voiceURI || '',
+  cloudVoice: config.cloudVoice || 'alloy',
+  voiceRate: Math.min(2, Math.max(0.5, Number(config.rate) || 1)),
+  voicePitch: Math.min(2, Math.max(0.5, Number(config.pitch) || 1)),
+  voiceVolume: Math.min(1, Math.max(0, Number.isFinite(Number(config.volume)) ? Number(config.volume) : 1))
+})
 const readAiVoiceConfigs = () => {
   try { return JSON.parse(localStorage.getItem(AI_VOICE_STORAGE_KEY) || '{}') }
   catch { return {} }
@@ -328,17 +348,33 @@ const loadBrowserVoices = () => {
   if (!window.speechSynthesis) return
   browserVoices.value = window.speechSynthesis.getVoices()
 }
-const openVoiceConfig = player => {
+const openVoiceConfig = async player => {
   voicePlayer.value = player
-  Object.assign(voiceForm, createVoiceConfig(readAiVoiceConfigs()[player.id]))
+  let config = null
+  try {
+    const response = await axios.get(`/ai/player/voice/${player.id}`)
+    if (response.data?.code === 200 && response.data.data) config = serverVoiceToLocal(response.data.data)
+  } catch {
+    // 服务端不可用时回退到本地缓存
+  }
+  Object.assign(voiceForm, config || createVoiceConfig(readAiVoiceConfigs()[player.id]))
   voiceDialogVisible.value = true
 }
-const saveVoiceConfig = () => {
+const saveVoiceConfig = async () => {
   if (!voicePlayer.value) return
+  const config = createVoiceConfig(voiceForm)
   const configs = readAiVoiceConfigs()
-  configs[voicePlayer.value.id] = createVoiceConfig(voiceForm)
+  configs[voicePlayer.value.id] = config
   localStorage.setItem(AI_VOICE_STORAGE_KEY, JSON.stringify(configs))
-  ElMessage.success(`${voicePlayer.value.name}的独立语音配置已保存`)
+  voiceSaving.value = true
+  try {
+    await axios.put(`/ai/player/voice/${voicePlayer.value.id}`, localVoiceToServer(config))
+    ElMessage.success(`${voicePlayer.value.name}的独立语音配置已保存`)
+  } catch (error) {
+    ElMessage.error(`语音配置保存失败：${error.message || '网络错误'}`)
+  } finally {
+    voiceSaving.value = false
+  }
   voiceDialogVisible.value = false
 }
 const testVoiceConfig = async () => {
