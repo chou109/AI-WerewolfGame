@@ -357,6 +357,8 @@ export default {
     nameLength: 'AI player name must be 2-20 characters',
     apiKeyRequired: 'Please enter API Key',
     apiKeyPlaceholder: 'Enter API Key',
+    apiKeyEditPlaceholder: 'Leave blank to keep the current key',
+    currentKeyHint: 'Current key: {key} — leave blank to keep',
     apiBaseUrlPlaceholder: 'Enter API Base URL',
     modelTypeRequired: 'Please select a model type',
     modelNameRequired: 'Please enter a model name',
@@ -386,6 +388,7 @@ export default {
   // AI Dialog Test
   aiDialogTest: {
     title: 'AI Player Dialog Test',
+    apiKey: 'API Key',
     selectAiPlayer: 'Select AI Player',
     dialogHistory: 'Dialog History',
     inputPlaceholder: 'Enter dialog content...',
@@ -401,6 +404,8 @@ export default {
     maxTokens: 'Max Tokens',
     historyCleared: 'Dialog history cleared',
     selectPlayerFirst: 'Please select an AI player first',
+    noApiKey: 'No API Key saved for this AI player on this device. Configure it in AI Player Management first.',
+    notConfigured: 'Not configured',
     enterContent: 'Please enter dialog content',
     sendFailed: 'Failed to send message',
     authFailed: 'Authentication failed: API key may be incorrect or expired',

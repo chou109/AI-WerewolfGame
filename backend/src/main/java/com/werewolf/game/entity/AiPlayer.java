@@ -1,6 +1,7 @@
 package com.werewolf.game.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -33,6 +34,7 @@ public class AiPlayer implements Serializable {
 
     private String avatarUrl;
 
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String apiKey;
 
     private String apiBaseUrl;
@@ -46,4 +48,25 @@ public class AiPlayer implements Serializable {
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;
+
+    /**
+     * 仅用于响应展示：是否已配置密钥（真实密钥永不回传）。
+     */
+    public boolean getHasApiKey() {
+        return apiKey != null && !apiKey.trim().isEmpty();
+    }
+
+    /**
+     * 仅用于响应展示：脱敏后的密钥，如 sk-****abcd。
+     */
+    public String getMaskedApiKey() {
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            return null;
+        }
+        String key = apiKey.trim();
+        if (key.length() <= 6) {
+            return "****";
+        }
+        return key.substring(0, 3) + "****" + key.substring(key.length() - 4);
+    }
 }

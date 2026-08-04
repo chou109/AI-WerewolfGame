@@ -125,7 +125,8 @@
         </el-form-item>
 
         <el-form-item :label="$t('aiPlayer.apiKey')" prop="apiKey">
-          <el-input v-model="aiPlayerForm.apiKey" type="password" :placeholder="$t('aiPlayer.apiKeyPlaceholder')" show-password />
+          <el-input v-model="aiPlayerForm.apiKey" type="password" :placeholder="aiPlayerForm.id ? $t('aiPlayer.apiKeyEditPlaceholder') : $t('aiPlayer.apiKeyPlaceholder')" show-password />
+          <span v-if="aiPlayerForm.id && aiPlayerForm.maskedApiKey" class="field-hint">{{ $t('aiPlayer.currentKeyHint', { key: aiPlayerForm.maskedApiKey }) }}</span>
         </el-form-item>
 
         <el-form-item :label="$t('aiPlayer.apiBaseUrl')" prop="apiBaseUrl">
@@ -280,6 +281,7 @@ import { ref, reactive, onMounted, onUnmounted, computed, watch, getCurrentInsta
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
+import { getAiPlayerKey, setAiPlayerKey, removeAiPlayerKey, getGlobalApiKey } from '../utils/apiKeys'
 import { speakText, stopSpeaking } from '../composables/useSpeechSynthesis.js'
 
 const { proxy } = getCurrentInstance()
@@ -517,7 +519,13 @@ const aiPlayerRules = {
   ],
   modelType: [{ required: true, message: () => $t('aiPlayer.modelTypeRequired'), trigger: 'change' }],
   modelName: [{ required: true, message: () => $t('aiPlayer.modelNameRequired'), trigger: 'blur' }],
-  apiKey: [{ required: true, message: () => $t('aiPlayer.apiKeyRequired'), trigger: 'blur' }]
+  apiKey: [{
+    validator: (rule, value, callback) => {
+      if (!aiPlayerForm.id && !String(value || '').trim()) callback(new Error($t('aiPlayer.apiKeyRequired')))
+      else callback()
+    },
+    trigger: 'blur'
+  }]
 }
 
 onMounted(() => {
@@ -572,6 +580,7 @@ const openCreateDialog = () => {
 const editAiPlayer = (aiPlayer) => {
   resetForm()
   Object.assign(aiPlayerForm, aiPlayer)
+  aiPlayerForm.apiKey = ''
   dialogTitle.value = $t('aiPlayer.edit')
   dialogVisible.value = true
 }
@@ -605,7 +614,8 @@ const requestProviderModels = async config => {
 }
 
 const testConnection = async () => {
-  if (!aiPlayerForm.apiKey) {
+  const apiKey = String(aiPlayerForm.apiKey || getAiPlayerKey(aiPlayerForm.id) || getGlobalApiKey()).replace(/`/g, '').trim()
+  if (!apiKey) {
     ElMessage.warning($t('aiPlayer.needApiKey'))
     return
   }
@@ -618,7 +628,7 @@ const testConnection = async () => {
   connectionStatus.value = ''
 
   try {
-    const response = await requestProviderModels(aiPlayerForm)
+    const response = await requestProviderModels({ apiBaseUrl: aiPlayerForm.apiBaseUrl, apiKey })
 
     if (response.data) {
       connectionStatus.value = 'success'
@@ -640,12 +650,13 @@ const testAllConnections = async () => {
   testingAllConnections.value = true
   aiPlayers.value.forEach(player => { connectionResults[player.id] = 'testing' })
   const results = await Promise.all(aiPlayers.value.map(async player => {
-    if (!player.apiKey || !player.apiBaseUrl) {
+    const apiKey = getAiPlayerKey(player.id) || getGlobalApiKey()
+    if (!apiKey || !player.apiBaseUrl) {
       connectionResults[player.id] = 'failed'
       return false
     }
     try {
-      const response = await requestProviderModels(player)
+      const response = await requestProviderModels({ apiBaseUrl: player.apiBaseUrl, apiKey })
       const success = Boolean(response.data)
       connectionResults[player.id] = success ? 'success' : 'failed'
       return success
@@ -671,7 +682,13 @@ const saveAiPlayer = async () => {
       loading.value = true
       try {
         let formData = { ...aiPlayerForm }
-        if (formData.apiKey) formData.apiKey = formData.apiKey.replace(/`/g, '').trim()
+        let savedApiKey = ''
+        if (formData.apiKey) {
+          formData.apiKey = formData.apiKey.replace(/`/g, '').trim()
+          savedApiKey = formData.apiKey
+        } else if (aiPlayerForm.id) {
+          delete formData.apiKey
+        }
         if (formData.apiBaseUrl) formData.apiBaseUrl = formData.apiBaseUrl.replace(/`/g, '').trim()
 
         let response
@@ -681,6 +698,7 @@ const saveAiPlayer = async () => {
           response = await axios.post('/ai/player/create', formData)
         }
         if (response.data.code === 200) {
+          if (savedApiKey) setAiPlayerKey(aiPlayerForm.id || response.data.data?.id, savedApiKey)
           ElMessage.success(aiPlayerForm.id ? $t('aiPlayer.updateSuccess') : $t('aiPlayer.createSuccess'))
           dialogVisible.value = false
           fetchAiPlayers()
@@ -701,6 +719,7 @@ const deleteAiPlayer = async (id) => {
   try {
     const response = await axios.delete(`/ai/player/delete/${id}`)
     if (response.data.code === 200) {
+      removeAiPlayerKey(id)
       ElMessage.success($t('aiPlayer.deleteSuccess'))
       fetchAiPlayers()
     } else {
@@ -713,7 +732,8 @@ const deleteAiPlayer = async (id) => {
 }
 
 const fetchModelList = async () => {
-  if (!aiPlayerForm.apiKey) { ElMessage.warning($t('aiPlayer.needApiKey')); return }
+  const apiKey = String(aiPlayerForm.apiKey || getAiPlayerKey(aiPlayerForm.id) || getGlobalApiKey()).replace(/`/g, '').trim()
+  if (!apiKey) { ElMessage.warning($t('aiPlayer.needApiKey')); return }
   if (!aiPlayerForm.apiBaseUrl) { ElMessage.warning($t('aiPlayer.needApiUrl')); return }
   if (fetchingModels.value) { ElMessage.warning($t('aiPlayer.fetchingModels')); return }
 
@@ -724,7 +744,7 @@ const fetchModelList = async () => {
     if (!apiUrl.endsWith('/')) apiUrl += '/'
 
     const response = await axios.get(`${apiUrl}models`, {
-      headers: { 'Authorization': `Bearer ${aiPlayerForm.apiKey}` }
+      headers: { 'Authorization': `Bearer ${apiKey}` }
     })
 
     if (response.data && Array.isArray(response.data.data)) {

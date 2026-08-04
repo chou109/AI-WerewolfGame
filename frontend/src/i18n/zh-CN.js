@@ -357,6 +357,8 @@ export default {
     nameLength: 'AI玩家名称长度在2-20个字符之间',
     apiKeyRequired: '请输入API Key',
     apiKeyPlaceholder: '请输入API Key',
+    apiKeyEditPlaceholder: '留空则保留当前密钥',
+    currentKeyHint: '当前密钥：{key}，留空则不修改',
     apiBaseUrlPlaceholder: '请输入API Base URL',
     modelTypeRequired: '请选择模型类型',
     modelNameRequired: '请输入模型名称',
@@ -386,6 +388,7 @@ export default {
   // AIDialogTest
   aiDialogTest: {
     title: 'AI玩家对话测试',
+    apiKey: 'API Key',
     selectAiPlayer: '选择AI玩家',
     dialogHistory: '对话历史',
     inputPlaceholder: '请输入对话内容...',
@@ -401,6 +404,8 @@ export default {
     maxTokens: '最大Token数',
     historyCleared: '对话历史已清空',
     selectPlayerFirst: '请先选择AI玩家',
+    noApiKey: '该玩家未在本机保存API Key，请先在AI玩家管理中填写',
+    notConfigured: '未配置',
     enterContent: '请输入对话内容',
     sendFailed: '发送消息失败',
     authFailed: '认证失败：API Key 可能错误或已过期',

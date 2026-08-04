@@ -30,6 +30,9 @@ public class AiPlayerServiceImpl extends ServiceImpl<AiPlayerMapper, AiPlayer> i
         if (aiPlayer.getLanguage() == null || aiPlayer.getLanguage().trim().isEmpty()) {
             aiPlayer.setLanguage("zh-CN");
         }
+        if (aiPlayer.getApiKey() != null) {
+            aiPlayer.setApiKey(aiPlayer.getApiKey().trim());
+        }
         aiPlayer.setCreateTime(LocalDateTime.now());
         aiPlayer.setUpdateTime(LocalDateTime.now());
         aiPlayer.setStatus(1);
@@ -41,6 +44,12 @@ public class AiPlayerServiceImpl extends ServiceImpl<AiPlayerMapper, AiPlayer> i
     public boolean updateAiPlayer(AiPlayer aiPlayer) {
         if (aiPlayer.getLanguage() == null || aiPlayer.getLanguage().trim().isEmpty()) {
             aiPlayer.setLanguage("zh-CN");
+        }
+        // 密钥留空表示不修改，避免覆盖服务端已保存的密钥
+        if (aiPlayer.getApiKey() == null || aiPlayer.getApiKey().trim().isEmpty()) {
+            aiPlayer.setApiKey(null);
+        } else {
+            aiPlayer.setApiKey(aiPlayer.getApiKey().trim());
         }
         aiPlayer.setUpdateTime(LocalDateTime.now());
         return updateById(aiPlayer);

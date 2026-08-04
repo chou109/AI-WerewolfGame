@@ -363,6 +363,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import { useTypewriter } from '../../composables/useTypewriter.js'
 import { getVoiceLanguageKey, getVoiceLanguageLabel, groupVoicesByLanguage, speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from '../../composables/useSpeechSynthesis.js'
+import { getAiPlayerKey, getGlobalApiKey } from '../../utils/apiKeys.js'
 import { BOARD_RULES, PACK_WOLF_ROLES, WEREWOLF_KNOWLEDGE, WOLF_TEAM_ROLES, getBoardRules, getRoleSummary, isPackWolfRole, isWolfTeamRole } from '../../game/rules.js'
 
 const { proxy } = getCurrentInstance()
@@ -1577,6 +1578,7 @@ const getAiConfig = async (player) => {
     const config = response.data.code === 200 ? response.data.data : null
     if (config) {
       config.language = config.language || 'zh-CN'
+      config.apiKey = getAiPlayerKey(player.aiPlayerId) || getGlobalApiKey()
       aiConfigCache.set(player.aiPlayerId, config)
       return config
     }

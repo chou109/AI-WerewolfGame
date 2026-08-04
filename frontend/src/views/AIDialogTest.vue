@@ -51,6 +51,7 @@
             <div><dt>{{ $t('aiDialogTest.modelType') }}</dt><dd>{{ selectedAiPlayer.modelType }}</dd></div>
             <div><dt>{{ $t('aiDialogTest.personality') }}</dt><dd>{{ selectedAiPlayer.personality || '—' }}</dd></div>
             <div><dt>{{ $t('aiDialogTest.strategy') }}</dt><dd>{{ selectedAiPlayer.strategy || '—' }}</dd></div>
+            <div><dt>{{ $t('aiDialogTest.apiKey') }}</dt><dd>{{ selectedAiPlayer.maskedApiKey || (getAiPlayerKey(selectedAiPlayer.id) ? '••••' : $t('aiDialogTest.notConfigured')) }}</dd></div>
             <div><dt>{{ $t('aiDialogTest.temperature') }}</dt><dd>{{ selectedAiPlayer.temperature || 0.7 }}</dd></div>
             <div><dt>{{ $t('aiDialogTest.maxTokens') }}</dt><dd>{{ selectedAiPlayer.maxTokens || 1000 }}</dd></div>
           </dl>
@@ -69,6 +70,7 @@
 import { ref, computed, onMounted, nextTick, getCurrentInstance } from 'vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
+import { getAiPlayerKey, getGlobalApiKey } from '../utils/apiKeys'
 
 const { proxy } = getCurrentInstance()
 const $t = proxy.$t
@@ -95,14 +97,17 @@ async function fetchAiPlayers() {
 const cleanApiKey = apiKey => (apiKey || '').replace(/`/g, '').trim().replace(/^['"]|['"]$/g, '')
 
 const validateApiConfig = aiPlayer => {
+  const apiKey = getAiPlayerKey(aiPlayer.id) || getGlobalApiKey()
+  if (!apiKey) return null
   let url = aiPlayer.apiBaseUrl || ''
   if (!url.startsWith('http')) url = `https://${url}`
   url = url.replace(/\/$/, '')
   const isAnthropic = ['claude', 'anthropic'].includes(aiPlayer.modelType)
   const fullUrl = `${url}${isAnthropic ? '/messages' : '/chat/completions'}`
   const headers = { 'Content-Type': 'application/json' }
-  if (isAnthropic) headers['x-api-key'] = cleanApiKey(aiPlayer.apiKey)
-  else headers.Authorization = `Bearer ${cleanApiKey(aiPlayer.apiKey)}`
+  const cleanKey = cleanApiKey(apiKey)
+  if (isAnthropic) headers['x-api-key'] = cleanKey
+  else headers.Authorization = `Bearer ${cleanKey}`
   return { fullUrl, headers, isAnthropic }
 }
 
@@ -119,6 +124,10 @@ async function sendMessage() {
   try {
     const aiPlayer = selectedAiPlayer.value
     const config = validateApiConfig(aiPlayer)
+    if (!config) {
+      ElMessage.warning($t('aiDialogTest.noApiKey'))
+      return
+    }
     const system = `You are ${aiPlayer.name}, ${aiPlayer.personality || 'an AI assistant'}. ${aiPlayer.strategy || ''}`
     const requestBody = config.isAnthropic
       ? { model: aiPlayer.modelName, max_tokens: aiPlayer.maxTokens || 1000, temperature: aiPlayer.temperature || 0.7, messages: [{ role: 'user', content: `${system}\n\n${dialogHistory.value.map(item => `${item.role}: ${item.content}`).join('\n')}` }] }
