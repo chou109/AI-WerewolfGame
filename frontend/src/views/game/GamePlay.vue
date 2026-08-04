@@ -493,9 +493,13 @@ const evilKnightState = reactive({ seerReflected: false, witchReflected: false }
 const shapeshifterState = reactive({ playerId: null, originalRole: null })
 const cursedFoxState = reactive({ playerId: null, killedBySeer: false })
 const gameResult = ref(null)
-const lastApiRequestTime = ref(0)
-const API_REQUEST_INTERVAL = 1200
-let aiRequestStartQueue = Promise.resolve()
+const API_MIN_START_INTERVAL_PER_PROVIDER = 250
+const AI_MAX_CONCURRENCY_PER_PROVIDER = 4
+const AI_PROVIDER_COOLDOWN_AFTER_FAILURES = 3
+const AI_PROVIDER_COOLDOWN_BASE_MS = 5000
+const AI_PROVIDER_COOLDOWN_MAX_MS = 30000
+const aiProviderGates = new Map()
+const aiProviderHealth = new Map()
 let lastAiFailureNoticeAt = 0
 const AI_MAX_ATTEMPTS = 2
 const AI_RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
@@ -1634,7 +1638,7 @@ const getAiConfig = async (player) => {
     const config = response.data.code === 200 ? response.data.data : null
     if (config) {
       config.language = config.language || 'zh-CN'
-      config.apiKey = getAiPlayerKey(player.aiPlayerId) || getGlobalApiKey()
+      config.apiKey = cleanApiKey(getAiPlayerKey(player.aiPlayerId) || getGlobalApiKey())
       aiConfigCache.set(player.aiPlayerId, config)
       return config
     }
@@ -1653,25 +1657,72 @@ const parseStructuredResponse = (content) => {
   try { return JSON.parse(stripped.slice(start, end + 1)) } catch { return null }
 }
 
-const normalizeApiUrl = (baseUrl) => {
-  let url = (baseUrl || 'https://api.deepseek.com/v1').trim().replace(/\/+$/, '')
-  if (!url.endsWith('/chat/completions')) url += '/chat/completions'
+const normalizeApiUrl = (baseUrl, modelType) => {
+  let url = (baseUrl || (isAnthropicModel(modelType) ? 'https://api.anthropic.com/v1' : 'https://api.deepseek.com/v1')).trim().replace(/\/+$/, '')
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`
+  if (isAnthropicModel(modelType)) {
+    if (/\/messages$/.test(url)) return url
+    return url.endsWith('/v1') ? `${url}/messages` : `${url}/v1/messages`
+  }
+  if (!/\/chat\/completions$/.test(url)) {
+    const hasPath = /\/[^/]+$/.test(url.replace(/^https?:\/\/[^/]+/, ''))
+    url += `${hasPath ? '' : '/v1'}/chat/completions`
+  }
   return url
 }
 
-const reserveAiRequestStart = async () => {
-  const reservation = aiRequestStartQueue
-    .catch(() => {})
-    .then(async () => {
-      const waitMs = Math.max(0, API_REQUEST_INTERVAL - (Date.now() - lastApiRequestTime.value))
-      if (waitMs > 0) await delay(waitMs)
-      lastApiRequestTime.value = Date.now()
-    })
-  aiRequestStartQueue = reservation.catch(() => {})
-  return reservation
+const cleanApiKey = apiKey => (apiKey || '').replace(/`/g, '').trim().replace(/^['"]|['"]$/g, '')
+
+const isAnthropicModel = modelType => ['claude', 'anthropic'].includes(String(modelType || '').toLowerCase())
+
+const providerKeyOf = config => {
+  const type = String(config?.modelType || '').toLowerCase() || 'openai-compatible'
+  const base = String(config?.apiBaseUrl || '').trim().replace(/\/+$/, '').toLowerCase() || 'default'
+  return `${type}::${base}`
 }
 
-const reportAiRequestFailure = error => {
+const acquireAiRequestSlot = async providerKey => {
+  let gate = aiProviderGates.get(providerKey)
+  if (!gate) {
+    gate = { queue: [], inFlight: 0, lastStartAt: 0 }
+    aiProviderGates.set(providerKey, gate)
+  }
+  if (gate.inFlight >= AI_MAX_CONCURRENCY_PER_PROVIDER) {
+    await new Promise(resolve => gate.queue.push(resolve))
+  }
+  gate.inFlight += 1
+  const health = aiProviderHealth.get(providerKey)
+  let cooldownMs = 0
+  if (health && health.consecutiveFailures >= AI_PROVIDER_COOLDOWN_AFTER_FAILURES) {
+    cooldownMs = Math.min(AI_PROVIDER_COOLDOWN_MAX_MS, AI_PROVIDER_COOLDOWN_BASE_MS * (2 ** (health.consecutiveFailures - AI_PROVIDER_COOLDOWN_AFTER_FAILURES)))
+  }
+  const waitMs = Math.max(cooldownMs, API_MIN_START_INTERVAL_PER_PROVIDER - (Date.now() - gate.lastStartAt))
+  if (waitMs > 0) await delay(waitMs)
+  gate.lastStartAt = Date.now()
+  return () => {
+    gate.inFlight = Math.max(0, gate.inFlight - 1)
+    const next = gate.queue.shift()
+    if (next) next()
+  }
+}
+
+const recordAiProviderResult = (providerKey, ok) => {
+  let health = aiProviderHealth.get(providerKey)
+  if (!health) {
+    health = { consecutiveFailures: 0, successes: 0, failures: 0, lastFailureAt: 0 }
+    aiProviderHealth.set(providerKey, health)
+  }
+  if (ok) {
+    health.consecutiveFailures = 0
+    health.successes += 1
+  } else {
+    health.consecutiveFailures += 1
+    health.failures += 1
+    health.lastFailureAt = Date.now()
+  }
+}
+
+const reportAiRequestFailure = (error, providerKey = '') => {
   const now = Date.now()
   const status = error?.status ? `HTTP ${error.status}` : (error?.name === 'AbortError' ? '请求超时' : error?.message || '网络错误')
   aiRequestState.failed += 1
@@ -1680,21 +1731,61 @@ const reportAiRequestFailure = error => {
   aiRequestState.lastAt = now
   if (now - lastAiFailureNoticeAt < 10000) return
   lastAiFailureNoticeAt = now
-  addRefereeMessage('模型服务暂时不可用，已重试并使用本地逻辑继续。', { visibility: 'god', detail: `${status}。503通常表示上游服务繁忙或临时不可用，并非游戏流程错误。` })
+  addRefereeMessage('模型服务暂时不可用，已重试并使用本地逻辑继续。', { visibility: 'god', detail: `${status}${providerKey ? `（供应商：${providerKey}）` : ''}。503通常表示上游服务繁忙或临时不可用，并非游戏流程错误。` })
 }
 
 const callStructuredAi = async (config, systemPrompt, userPrompt) => {
   if (!config?.apiKey) return null
+  const modelType = String(config.modelType || '').toLowerCase()
+  const isAnthropic = isAnthropicModel(modelType)
+  const providerKey = providerKeyOf(config)
   aiRequestState.pending += 1
   const temperature = typeof config.temperature === 'number'
     ? (config.temperature > 2 ? config.temperature / 10 : config.temperature)
     : 0.7
-  const body = {
-    model: config.modelName || 'deepseek-chat',
-    messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-    temperature,
-    max_tokens: Math.min(2200, Math.max(900, Number(config.maxTokens) || 1000)),
-    response_format: { type: 'json_object' }
+  const maxTokens = Math.min(2200, Math.max(900, Number(config.maxTokens) || 1000))
+  const apiKey = cleanApiKey(config.apiKey)
+  const buildRequestBody = () => isAnthropic
+    ? {
+        model: config.modelName || 'claude-3-5-sonnet-latest',
+        max_tokens: maxTokens,
+        temperature,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }]
+      }
+    : {
+        model: config.modelName || 'deepseek-chat',
+        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+        temperature,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' }
+      }
+  const buildHeaders = () => {
+    const headers = { 'Content-Type': 'application/json' }
+    if (isAnthropic) {
+      headers['x-api-key'] = apiKey
+      headers['anthropic-version'] = '2023-06-01'
+    } else {
+      headers.Authorization = `Bearer ${apiKey}`
+    }
+    return headers
+  }
+  const extractMessage = data => {
+    if (isAnthropic) {
+      const blocks = data?.content
+      let text = ''
+      let thinking = ''
+      if (Array.isArray(blocks)) {
+        for (const block of blocks) {
+          if (typeof block === 'string') text += block
+          else if (block?.type === 'text') text += block.text || ''
+          else if (block?.type === 'thinking') thinking += block.thinking || ''
+        }
+      } else if (typeof blocks === 'string') text = blocks
+      return { text, thinking }
+    }
+    const message = data.choices?.[0]?.message || data.output?.choices?.[0]?.message || {}
+    return { text: message.content, thinking: message.reasoning_content || '' }
   }
   let lastError = null
   try {
@@ -1702,13 +1793,14 @@ const callStructuredAi = async (config, systemPrompt, userPrompt) => {
       await waitWhilePaused()
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 45000)
+      let releaseSlot = null
       try {
-        await reserveAiRequestStart()
+        releaseSlot = await acquireAiRequestSlot(providerKey)
         aiRequestState.inFlight += 1
-        const response = await fetch(normalizeApiUrl(config.apiBaseUrl), {
+        const response = await fetch(normalizeApiUrl(config.apiBaseUrl, modelType), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-          body: JSON.stringify(body),
+          headers: buildHeaders(),
+          body: JSON.stringify(buildRequestBody()),
           signal: controller.signal
         })
         if (!response.ok) {
@@ -1718,9 +1810,11 @@ const callStructuredAi = async (config, systemPrompt, userPrompt) => {
           throw error
         }
         const data = await response.json()
-        const message = data.choices?.[0]?.message || data.output?.choices?.[0]?.message || {}
-        const parsed = parseStructuredResponse(message.content)
-        if (parsed && !parsed.thinking && message.reasoning_content) parsed.thinking = message.reasoning_content
+        const { text, thinking } = extractMessage(data)
+        const parsed = parseStructuredResponse(text)
+        if (parsed && !parsed.thinking && thinking) parsed.thinking = thinking
+        if (!parsed) throw new Error('Invalid response format')
+        recordAiProviderResult(providerKey, true)
         aiRequestState.succeeded += 1
         aiRequestState.lastStatus = 'OK'
         aiRequestState.lastError = ''
@@ -1728,6 +1822,7 @@ const callStructuredAi = async (config, systemPrompt, userPrompt) => {
         return parsed
       } catch (error) {
         lastError = error
+        recordAiProviderResult(providerKey, false)
         const retryable = AI_RETRYABLE_STATUSES.has(error?.status) || error?.name === 'AbortError' || error?.name === 'TypeError'
         if (!retryable || attempt >= AI_MAX_ATTEMPTS) break
         const retryAfter = Number(error?.retryAfter)
@@ -1736,11 +1831,12 @@ const callStructuredAi = async (config, systemPrompt, userPrompt) => {
           : Math.min(8000, 1200 * (2 ** (attempt - 1)))
         await delay(backoff + Math.floor(Math.random() * 300))
       } finally {
+        if (releaseSlot) releaseSlot()
         if (aiRequestState.inFlight > 0) aiRequestState.inFlight -= 1
         clearTimeout(timeout)
       }
     }
-    reportAiRequestFailure(lastError)
+    reportAiRequestFailure(lastError, providerKey)
     return null
   } finally {
     if (aiRequestState.pending > 0) aiRequestState.pending -= 1
