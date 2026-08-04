@@ -130,6 +130,13 @@
             <span class="ledger-label">{{ $locale === 'zh-CN' ? '夜间结算' : 'NIGHT RESULT' }}</span>
             <strong>{{ nightState.explanation }}</strong>
           </div>
+          <div v-if="aiRequestState.pending || aiRequestState.inFlight || aiRequestState.lastError" class="ledger-item ledger-ai-status">
+            <span class="ledger-label">{{ $locale === 'zh-CN' ? '模型请求' : 'MODEL REQUESTS' }}</span>
+            <strong>
+              {{ $locale === 'zh-CN' ? `排队 ${aiRequestState.pending} · 进行中 ${aiRequestState.inFlight}` : `Queued ${aiRequestState.pending} · Active ${aiRequestState.inFlight}` }}
+            </strong>
+            <small v-if="aiRequestState.lastError">{{ aiRequestState.lastError }}</small>
+          </div>
         </div>
 
         <div v-if="decisionWindow.active" class="decision-window">
@@ -485,6 +492,7 @@ let lastAiFailureNoticeAt = 0
 const AI_MAX_ATTEMPTS = 2
 const AI_RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
 const aiConfigCache = new Map()
+const aiRequestState = reactive({ pending: 0, inFlight: 0, succeeded: 0, failed: 0, lastError: '', lastStatus: '', lastAt: 0 })
 const playerMemories = reactive({})
 const gameRules = Object.freeze({
   guardCanSelfProtect: true,
@@ -1598,14 +1606,19 @@ const reserveAiRequestStart = async () => {
 
 const reportAiRequestFailure = error => {
   const now = Date.now()
+  const status = error?.status ? `HTTP ${error.status}` : (error?.name === 'AbortError' ? '请求超时' : error?.message || '网络错误')
+  aiRequestState.failed += 1
+  aiRequestState.lastStatus = status
+  aiRequestState.lastError = status
+  aiRequestState.lastAt = now
   if (now - lastAiFailureNoticeAt < 10000) return
   lastAiFailureNoticeAt = now
-  const status = error?.status ? `HTTP ${error.status}` : (error?.name === 'AbortError' ? '请求超时' : error?.message || '网络错误')
   addRefereeMessage('模型服务暂时不可用，已重试并使用本地逻辑继续。', { visibility: 'god', detail: `${status}。503通常表示上游服务繁忙或临时不可用，并非游戏流程错误。` })
 }
 
 const callStructuredAi = async (config, systemPrompt, userPrompt) => {
   if (!config?.apiKey) return null
+  aiRequestState.pending += 1
   const temperature = typeof config.temperature === 'number'
     ? (config.temperature > 2 ? config.temperature / 10 : config.temperature)
     : 0.7
@@ -1617,44 +1630,54 @@ const callStructuredAi = async (config, systemPrompt, userPrompt) => {
     response_format: { type: 'json_object' }
   }
   let lastError = null
-  for (let attempt = 1; attempt <= AI_MAX_ATTEMPTS; attempt++) {
-    await waitWhilePaused()
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 45000)
-    try {
-      await reserveAiRequestStart()
-      const response = await fetch(normalizeApiUrl(config.apiBaseUrl), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      })
-      if (!response.ok) {
-        const error = new Error(`HTTP ${response.status}`)
-        error.status = response.status
-        error.retryAfter = response.headers.get('retry-after') || ''
-        throw error
+  try {
+    for (let attempt = 1; attempt <= AI_MAX_ATTEMPTS; attempt++) {
+      await waitWhilePaused()
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 45000)
+      try {
+        await reserveAiRequestStart()
+        aiRequestState.inFlight += 1
+        const response = await fetch(normalizeApiUrl(config.apiBaseUrl), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        })
+        if (!response.ok) {
+          const error = new Error(`HTTP ${response.status}`)
+          error.status = response.status
+          error.retryAfter = response.headers.get('retry-after') || ''
+          throw error
+        }
+        const data = await response.json()
+        const message = data.choices?.[0]?.message || data.output?.choices?.[0]?.message || {}
+        const parsed = parseStructuredResponse(message.content)
+        if (parsed && !parsed.thinking && message.reasoning_content) parsed.thinking = message.reasoning_content
+        aiRequestState.succeeded += 1
+        aiRequestState.lastStatus = 'OK'
+        aiRequestState.lastError = ''
+        aiRequestState.lastAt = Date.now()
+        return parsed
+      } catch (error) {
+        lastError = error
+        const retryable = AI_RETRYABLE_STATUSES.has(error?.status) || error?.name === 'AbortError' || error?.name === 'TypeError'
+        if (!retryable || attempt >= AI_MAX_ATTEMPTS) break
+        const retryAfter = Number(error?.retryAfter)
+        const backoff = Number.isFinite(retryAfter) && retryAfter > 0
+          ? Math.min(8000, retryAfter * 1000)
+          : Math.min(8000, 1200 * (2 ** (attempt - 1)))
+        await delay(backoff + Math.floor(Math.random() * 300))
+      } finally {
+        if (aiRequestState.inFlight > 0) aiRequestState.inFlight -= 1
+        clearTimeout(timeout)
       }
-      const data = await response.json()
-      const message = data.choices?.[0]?.message || data.output?.choices?.[0]?.message || {}
-      const parsed = parseStructuredResponse(message.content)
-      if (parsed && !parsed.thinking && message.reasoning_content) parsed.thinking = message.reasoning_content
-      return parsed
-    } catch (error) {
-      lastError = error
-      const retryable = AI_RETRYABLE_STATUSES.has(error?.status) || error?.name === 'AbortError' || error?.name === 'TypeError'
-      if (!retryable || attempt >= AI_MAX_ATTEMPTS) break
-      const retryAfter = Number(error?.retryAfter)
-      const backoff = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.min(8000, retryAfter * 1000)
-        : Math.min(8000, 1200 * (2 ** (attempt - 1)))
-      await delay(backoff + Math.floor(Math.random() * 300))
-    } finally {
-      clearTimeout(timeout)
     }
+    reportAiRequestFailure(lastError)
+    return null
+  } finally {
+    if (aiRequestState.pending > 0) aiRequestState.pending -= 1
   }
-  reportAiRequestFailure(lastError)
-  return null
 }
 
 const roleVictoryCondition = (player, language) => {
@@ -3695,6 +3718,7 @@ onUnmounted(() => {
 
 .voice-switch-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; padding: 12px 14px; border: 1px solid rgba(180, 204, 222, .15); border-radius: 6px; background: rgba(5, 12, 19, .34); }
 .voice-switch-row strong, .voice-switch-row span { display: block; }
+.ledger-ai-status small { display: block; margin-top: 4px; color: #c38b8b; font-size: 11px; }
 .voice-switch-row strong { color: #e8eef3; font-size: 13px; }
 .voice-switch-row span { margin-top: 4px; color: #8294a3; font-size: 12px; }
 .player-voice-sliders { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
