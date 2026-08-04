@@ -7,7 +7,9 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -59,6 +61,14 @@ public class VoiceController {
     @Value("${voice.cloud.rate-limit-per-minute:120}")
     private int rateLimitPerMinute;
 
+    @Value("${voice.cloud.cache-max-bytes:536870912}")
+    private long cacheMaxBytes;
+
+    @Value("${voice.cloud.cache-ttl-days:30}")
+    private int cacheTtlDays;
+
+    private volatile long lastCacheTrimAt = 0L;
+
     private static final Set<String> BLOCKED_HOST_SUFFIXES = new HashSet<>(Arrays.asList(
             ".local", ".internal", ".localhost", ".lan", ".home", ".test", ".example"
     ));
@@ -67,6 +77,38 @@ public class VoiceController {
     private VoiceCacheService voiceCacheService;
 
     private final ConcurrentMap<String, long[]> rateBuckets = new ConcurrentHashMap<>();
+
+    @GetMapping("/cache/stats")
+    public Map<String, Object> cacheStats() {
+        if (voiceCacheService == null) {
+            Map<String, Object> empty = new HashMap<>();
+            empty.put("cacheEnabled", false);
+            empty.put("cacheCount", 0);
+            empty.put("totalBytes", 0L);
+            return response(200, empty);
+        }
+        return response(200, voiceCacheService.stats());
+    }
+
+    @DeleteMapping("/cache")
+    public Map<String, Object> clearCache() {
+        if (voiceCacheService == null) {
+            return response(200, Collections.singletonMap("cleared", 0));
+        }
+        int cleared = voiceCacheService.clearAll();
+        return response(200, Collections.singletonMap("cleared", cleared));
+    }
+
+    @DeleteMapping("/cache/old")
+    public Map<String, Object> clearOldCache(@RequestParam(defaultValue = "30") int days) {
+        if (voiceCacheService == null) {
+            return response(200, Collections.singletonMap("cleared", 0));
+        }
+        int safeDays = Math.max(1, Math.min(days, 3650));
+        long before = System.currentTimeMillis() - safeDays * 86_400_000L;
+        int cleared = voiceCacheService.clearOlderThan(before);
+        return response(200, Collections.singletonMap("cleared", cleared));
+    }
 
     @GetMapping("/status")
     public Map<String, Object> status() {
@@ -162,12 +204,34 @@ public class VoiceController {
             if (voiceCacheService != null) {
                 voiceCacheService.saveAudio(cacheKey, provider, stringValue(request.get("voice"), "alloy"),
                         stringValue(request.get("responseFormat"), "mp3"), upstream.getBody());
+                maybeTrimCache();
             }
             return new ResponseEntity<>(upstream.getBody(), responseHeaders, HttpStatus.OK);
         } catch (ResponseStatusException exception) {
             throw exception;
         } catch (RestClientException exception) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "云端语音请求失败：" + exception.getMessage(), exception);
+        }
+    }
+
+    private void maybeTrimCache() {
+        long now = System.currentTimeMillis();
+        if (now - lastCacheTrimAt < 600_000L) {
+            return;
+        }
+        synchronized (this) {
+            if (now - lastCacheTrimAt < 600_000L) {
+                return;
+            }
+            lastCacheTrimAt = now;
+            try {
+                voiceCacheService.trimToLimit(cacheMaxBytes);
+                if (cacheTtlDays > 0) {
+                    voiceCacheService.clearOlderThan(now - cacheTtlDays * 86_400_000L);
+                }
+            } catch (Exception ignored) {
+                // 缓存清理失败不影响语音合成
+            }
         }
     }
 

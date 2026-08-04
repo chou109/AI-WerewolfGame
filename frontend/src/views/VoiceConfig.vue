@@ -144,6 +144,18 @@
         </div>
         <el-checkbox v-model="voiceConfig.cloud.fallbackToBrowser">{{ $t('voiceConfig.fallbackToBrowser') }}</el-checkbox>
       </el-form>
+      <div class="cache-panel">
+        <div class="cache-copy">
+          <strong>{{ $locale === 'zh-CN' ? '云端语音缓存' : 'Cloud voice cache' }}</strong>
+          <span v-if="cacheStats">{{ cacheStats.cacheCount }} 条 · {{ formatBytes(cacheStats.totalBytes) }}</span>
+          <span v-else>{{ $locale === 'zh-CN' ? '缓存服务未启用' : 'Cache unavailable' }}</span>
+        </div>
+        <div class="cache-actions">
+          <el-button size="small" :loading="cacheLoading" @click="loadCacheStats">{{ $locale === 'zh-CN' ? '刷新' : 'Refresh' }}</el-button>
+          <el-button size="small" :loading="cacheClearing" @click="clearOldCache">{{ $locale === 'zh-CN' ? '清理30天前' : 'Purge 30d old' }}</el-button>
+          <el-button size="small" type="danger" :loading="cacheClearing" @click="clearAllCache">{{ $locale === 'zh-CN' ? '清空缓存' : 'Clear cache' }}</el-button>
+        </div>
+      </div>
     </el-card>
 
     <section class="test-panel">
@@ -179,6 +191,9 @@ const voiceLanguageFilter = ref('all')
 const testing = ref(false)
 const backendStatus = ref({ openaiConfigured: false, azureConfigured: false })
 const proxyReachable = ref(false)
+const cacheStats = ref(null)
+const cacheLoading = ref(false)
+const cacheClearing = ref(false)
 const voiceConfig = reactive(loadVoiceConfig())
 const testText = ref($t('voiceConfig.testText'))
 const testSpeaker = ref('referee')
@@ -221,6 +236,50 @@ const loadVoices = () => {
   if (!voiceConfig.voiceURI && voices.value.length) {
     const preferred = voices.value.find(voice => voice.lang?.toLowerCase().startsWith('zh')) || voices.value[0]
     voiceConfig.voiceURI = preferred.voiceURI
+  }
+}
+const formatBytes = bytes => {
+  const value = Number(bytes) || 0
+  if (value >= 1024 * 1024 * 1024) return (value / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+  if (value >= 1024 * 1024) return (value / (1024 * 1024)).toFixed(1) + ' MB'
+  if (value >= 1024) return (value / 1024).toFixed(1) + ' KB'
+  return value + ' B'
+}
+const loadCacheStats = async () => {
+  cacheLoading.value = true
+  try {
+    const response = await axios.get('/voice/cache/stats')
+    if (response.data?.code === 200) cacheStats.value = response.data.data
+  } catch {
+    cacheStats.value = null
+  } finally {
+    cacheLoading.value = false
+  }
+}
+const clearAllCache = async () => {
+  cacheClearing.value = true
+  try {
+    const response = await axios.delete('/voice/cache')
+    const cleared = response.data?.data?.cleared ?? 0
+    ElMessage.success($locale === 'zh-CN' ? '已清空 ' + cleared + ' 条语音缓存' : 'Cleared ' + cleared + ' cached voices')
+    await loadCacheStats()
+  } catch {
+    ElMessage.error($locale === 'zh-CN' ? '清空缓存失败' : 'Failed to clear cache')
+  } finally {
+    cacheClearing.value = false
+  }
+}
+const clearOldCache = async () => {
+  cacheClearing.value = true
+  try {
+    const response = await axios.delete('/voice/cache/old', { params: { days: 30 } })
+    const cleared = response.data?.data?.cleared ?? 0
+    ElMessage.success($locale === 'zh-CN' ? '已清理 ' + cleared + ' 条过期缓存' : 'Cleared ' + cleared + ' expired voices')
+    await loadCacheStats()
+  } catch {
+    ElMessage.error($locale === 'zh-CN' ? '清理过期缓存失败' : 'Failed to purge expired cache')
+  } finally {
+    cacheClearing.value = false
   }
 }
 const loadCloudStatus = async () => {
@@ -284,6 +343,7 @@ const resetConfig = () => {
 onMounted(() => {
   loadVoices()
   loadCloudStatus()
+  loadCacheStats()
   window.speechSynthesis?.addEventListener('voiceschanged', loadVoices)
 })
 onUnmounted(() => {
@@ -305,6 +365,11 @@ onUnmounted(() => {
 .config-card, .cloud-card { border-color: rgba(180, 204, 222, .18) !important; background: linear-gradient(155deg, #101d2a, #0b141f) !important; }
 .voice-language-filter { margin-bottom: 18px; }
 .cloud-card { margin-top: 18px; }
+.cache-panel { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; padding: 14px 16px; border: 1px solid rgba(180, 204, 222, .18); border-radius: 10px; background: rgba(9, 18, 27, .55); }
+.cache-copy { display: flex; flex-direction: column; gap: 4px; }
+.cache-copy strong { color: #edf4f8; font: 700 13px/1 var(--font-heading); }
+.cache-copy span { color: #9eafbe; font-size: 12px; }
+.cache-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .config-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .config-header h3 { margin: 8px 0 0; color: #eff5fa; font-size: 21px; letter-spacing: 0; }
 .voice-note { margin: 18px 0 22px; }

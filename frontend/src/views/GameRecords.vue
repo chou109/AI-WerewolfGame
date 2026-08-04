@@ -54,6 +54,26 @@
               {{ player.number }}号 {{ player.name }} · {{ player.role }}
             </span>
           </div>
+                    <h4>{{ $locale === 'zh-CN' ? '复盘统计' : 'Replay stats' }}</h4>
+          <div class="replay-stats">
+            <div class="stat-block">
+              <strong>{{ $locale === 'zh-CN' ? '发言次数' : 'Speeches' }}</strong>
+              <div class="stat-chips">
+                <span v-for="item in speechStats" :key="item.label" class="stat-chip">{{ item.label }}：{{ item.count }}</span>
+                <span v-if="!speechStats.length" class="stat-chip muted">—</span>
+              </div>
+            </div>
+            <div class="stat-block">
+              <strong>{{ $locale === 'zh-CN' ? '票型统计' : 'Vote tallies' }}</strong>
+              <div v-for="(voteRound, index) in voteSummaries" :key="'sum-' + index" class="vote-summary">
+                <strong>{{ voteRound.label }}：</strong>
+                <span v-for="item in voteRound.counts" :key="'c-' + item.label" class="stat-chip">{{ item.label }}：{{ item.count }}票</span>
+                <span v-if="voteRound.winner" class="stat-chip top">{{ $locale === 'zh-CN' ? '最高票' : 'Top' }}：{{ voteRound.winner }}</span>
+                <span v-if="voteRound.abstain.length" class="stat-chip">{{ $locale === 'zh-CN' ? '弃票' : 'Abstain' }}：{{ voteRound.abstain.join('、') }}</span>
+              </div>
+              <div v-if="!voteSummaries.length" class="stat-chip muted">—</div>
+            </div>
+          </div>
           <h4>{{ $locale === 'zh-CN' ? '公开对局记录' : 'Full public log' }}</h4>
           <div class="record-log">
             <p v-for="(message, index) in selectedRecord.payload.publicMessages || []" :key="index"><strong>{{ message.sender }}：</strong>{{ message.content }}</p>
@@ -65,6 +85,10 @@
             <span v-if="(voteRound.abstainVoterIds || []).length">；{{ $locale === 'zh-CN' ? '弃票' : 'Abstained' }}：{{ voteRound.abstainVoterIds.map(playerLabel).join('、') }}</span>
           </div>
         </template>
+      </template>
+      <template #footer>
+        <el-button @click="exportRecord">{{ $locale === 'zh-CN' ? '导出JSON' : 'Export JSON' }}</el-button>
+        <el-button type="primary" @click="detailVisible = false">{{ $locale === 'zh-CN' ? '关闭' : 'Close' }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -82,6 +106,60 @@ const records = ref([]); const page = ref(1); const size = ref(10); const total 
 const loading = ref(false)
 const detailVisible = ref(false)
 const selectedRecord = ref(null)
+const speechStats = computed(() => {
+  const players = selectedRecord.value?.payload?.players || []
+  const byName = new Map(players.map(p => [String(p.name), p]))
+  const byNumber = new Map(players.map(p => [String(p.number), p]))
+  const counts = new Map()
+  ;(selectedRecord.value?.payload?.publicMessages || []).forEach(message => {
+    if (message.type && message.type !== 'player') return
+    const sender = String(message.sender || '')
+    const player = byName.get(sender) || byNumber.get(sender)
+    if (!player) return
+    const label = player.number + '号 ' + player.name
+    counts.set(label, (counts.get(label) || 0) + 1)
+  })
+  return [...counts.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count)
+})
+const voteSummaries = computed(() => {
+  const players = selectedRecord.value?.payload?.players || []
+  const history = selectedRecord.value?.payload?.voteHistory || []
+  return history.map((voteRound, index) => {
+    const counts = new Map()
+    ;(voteRound.ballots || []).forEach(ballot => {
+      const target = Number(ballot.targetId)
+      counts.set(target, (counts.get(target) || 0) + 1)
+    })
+    const entries = [...counts.entries()].sort((a, b) => b[1] - a[1])
+    const top = entries[0]
+    const winner = top ? players.find(p => Number(p.id) === Number(top[0])) : null
+    return {
+      label: voteRound.label || (($locale === 'zh-CN' ? '第' : 'Round ') + (index + 1)),
+      counts: entries.map(([id, count]) => ({ label: playerLabel(id), count })),
+      winner: winner ? (winner.number + '号 ' + winner.name + '（' + top[1] + '票）') : '',
+      abstain: (voteRound.abstainVoterIds || []).map(playerLabel)
+    }
+  })
+})
+const exportRecord = () => {
+  if (!selectedRecord.value) return
+  const data = {
+    ...(selectedRecord.value.payload || {}),
+    roomId: selectedRecord.value.roomId,
+    board: selectedRecord.value.gameBoard,
+    winner: selectedRecord.value.winner,
+    finishedAt: selectedRecord.value.createTime
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'werewolf-' + (selectedRecord.value.roomId || 'game') + '-' + (selectedRecord.value.createTime || Date.now()) + '.json'
+  link.click()
+  URL.revokeObjectURL(url)
+}
 const pagedRecords = computed(() => records.value.slice((page.value - 1) * size.value, page.value * size.value))
 
 const parsePayload = value => {
@@ -184,5 +262,13 @@ onMounted(fetchRecords)
 .record-log { max-height:320px; overflow:auto; border-top:1px solid #e5e5e5; }
 .record-log p { margin:0; padding:9px 2px; border-bottom:1px solid #ededed; line-height:1.55; }
 .recovered-record-alert { margin-top:18px; }
+.replay-stats { display:flex; flex-direction:column; gap:12px; margin-bottom:18px; }
+.stat-block { display:flex; flex-direction:column; gap:6px; }
+.stat-block > strong { font-size:13px; color:#333; }
+.stat-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.stat-chip { display:inline-block; padding:3px 8px; border:1px solid #d9d9d9; border-radius:10px; font-size:12px; color:#555; background:#fafafa; }
+.stat-chip.top { border-color:#d9b55d; color:#8a6d1a; background:#fdf6e3; }
+.stat-chip.muted { color:#999; }
+.vote-summary { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:6px; font-size:12px; }
 .vote-round { margin-bottom:8px; font-size:13px; color:#555; }
 </style>
