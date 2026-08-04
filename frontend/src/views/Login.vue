@@ -24,13 +24,14 @@
 
 <script setup>
 import { ref, reactive, getCurrentInstance } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import { ElMessage } from 'element-plus'
 
 const { proxy } = getCurrentInstance()
 const $t = proxy.$t; const $locale = proxy.$locale
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 const formRef = ref(null); const loading = ref(false)
 const form = reactive({ username: '', password: '' })
@@ -41,7 +42,7 @@ const rules = {
 const login = async () => {
   if (!formRef.value) return
   await formRef.value.validate(async (v) => {
-    if (v) { loading.value = true; const ok = await userStore.login(form.username, form.password); loading.value = false; if (ok) { ElMessage.success($t('auth.loginSuccess')); router.push('/') } else ElMessage.error($locale==='zh-CN'?'登录失败':'Login failed') }
+    if (v) { loading.value = true; const ok = await userStore.login(form.username, form.password); loading.value = false; if (ok) { ElMessage.success($t('auth.loginSuccess')); router.push(route.query.redirect || '/') } else ElMessage.error($locale==='zh-CN'?'登录失败':'Login failed') }
   })
 }
 </script>

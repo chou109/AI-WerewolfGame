@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import com.werewolf.game.util.MapUtil;
 
 /**
  * 游戏房间控制器
@@ -24,7 +25,7 @@ public class GameRoomController {
     @PostMapping("/create")
     public Map<String, Object> createRoom(@RequestBody GameRoom gameRoom) {
         GameRoom room = gameRoomService.createRoom(gameRoom);
-        return Map.of("code", 200, "message", "房间创建成功", "data", room);
+        return MapUtil.of("code", 200, "message", "房间创建成功", "data", room);
     }
 
     /**
@@ -34,9 +35,9 @@ public class GameRoomController {
     public Map<String, Object> getRoomInfo(@PathVariable Long id) {
         GameRoom room = gameRoomService.getById(id);
         if (room != null) {
-            return Map.of("code", 200, "data", room);
+            return MapUtil.of("code", 200, "data", room);
         } else {
-            return Map.of("code", 400, "message", "房间不存在");
+            return MapUtil.of("code", 400, "message", "房间不存在");
         }
     }
 
@@ -47,9 +48,9 @@ public class GameRoomController {
     public Map<String, Object> getRoomByCode(@PathVariable String code) {
         GameRoom room = gameRoomService.findByRoomCode(code);
         if (room != null) {
-            return Map.of("code", 200, "data", room);
+            return MapUtil.of("code", 200, "data", room);
         } else {
-            return Map.of("code", 400, "message", "房间不存在");
+            return MapUtil.of("code", 400, "message", "房间不存在");
         }
     }
 
@@ -59,7 +60,7 @@ public class GameRoomController {
     @GetMapping("/available")
     public Map<String, Object> getAvailableRooms() {
         List<GameRoom> rooms = gameRoomService.getAvailableRooms();
-        return Map.of("code", 200, "data", rooms);
+        return MapUtil.of("code", 200, "data", rooms);
     }
 
     /**
@@ -68,7 +69,7 @@ public class GameRoomController {
     @GetMapping("/list")
     public Map<String, Object> getRoomList() {
         List<GameRoom> rooms = gameRoomService.getAllRooms();
-        return Map.of("code", 200, "data", rooms);
+        return MapUtil.of("code", 200, "data", rooms);
     }
 
     /**
@@ -79,13 +80,13 @@ public class GameRoomController {
         Long roomId = parseLong(params.get("roomId"));
         Integer status = parseInteger(params.get("status"));
         if (roomId == null || status == null) {
-            return Map.of("code", 400, "message", "房间状态参数不完整");
+            return MapUtil.of("code", 400, "message", "房间状态参数不完整");
         }
         boolean result = gameRoomService.updateRoomStatus(roomId, status);
         if (result) {
-            return Map.of("code", 200, "message", "状态更新成功");
+            return MapUtil.of("code", 200, "message", "状态更新成功");
         } else {
-            return Map.of("code", 400, "message", "更新失败");
+            return MapUtil.of("code", 400, "message", "更新失败");
         }
     }
 
@@ -95,12 +96,12 @@ public class GameRoomController {
     @PutMapping("/start")
     public Map<String, Object> startGame(@RequestBody Map<String, Object> params) {
         Long roomId = parseLong(params.get("roomId"));
-        if (roomId == null) return Map.of("code", 400, "message", "房间编号无效");
+        if (roomId == null) return MapUtil.of("code", 400, "message", "房间编号无效");
         boolean result = gameRoomService.startGame(roomId);
         if (result) {
-            return Map.of("code", 200, "message", "游戏开始");
+            return MapUtil.of("code", 200, "message", "游戏开始");
         } else {
-            return Map.of("code", 400, "message", "操作失败");
+            return MapUtil.of("code", 400, "message", "操作失败");
         }
     }
 
@@ -111,12 +112,12 @@ public class GameRoomController {
     public Map<String, Object> endGame(@RequestBody Map<String, Object> params) {
         Long roomId = parseLong(params.get("roomId"));
         String winner = params.get("winner") == null ? "" : params.get("winner").toString().trim();
-        if (roomId == null || winner.isEmpty()) return Map.of("code", 400, "message", "结束房间参数不完整");
+        if (roomId == null || winner.isEmpty()) return MapUtil.of("code", 400, "message", "结束房间参数不完整");
         boolean result = gameRoomService.endGame(roomId, winner);
         if (result) {
-            return Map.of("code", 200, "message", "游戏结束");
+            return MapUtil.of("code", 200, "message", "游戏结束");
         } else {
-            return Map.of("code", 400, "message", "操作失败");
+            return MapUtil.of("code", 400, "message", "操作失败");
         }
     }
 
@@ -127,9 +128,9 @@ public class GameRoomController {
     public Map<String, Object> deleteRoom(@PathVariable Long id) {
         boolean result = gameRoomService.deleteRoom(id);
         if (result) {
-            return Map.of("code", 200, "message", "房间删除成功");
+            return MapUtil.of("code", 200, "message", "房间删除成功");
         } else {
-            return Map.of("code", 400, "message", "房间删除失败");
+            return MapUtil.of("code", 400, "message", "房间删除失败");
         }
     }
 

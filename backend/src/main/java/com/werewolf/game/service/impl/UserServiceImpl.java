@@ -7,6 +7,8 @@ import com.werewolf.game.service.UserService;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 
 /**
@@ -24,8 +26,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     public User login(String username, String password) {
         User user = findByUsername(username);
         if (user != null) {
-            String md5Password = DigestUtils.md5DigestAsHex(password.getBytes());
-            if (md5Password.equals(user.getPassword())) {
+            String md5Password = DigestUtils.md5DigestAsHex(password.getBytes(StandardCharsets.UTF_8));
+            if (MessageDigest.isEqual(
+                    md5Password.getBytes(StandardCharsets.UTF_8),
+                    user.getPassword().getBytes(StandardCharsets.UTF_8))) {
                 user.setLastLoginTime(LocalDateTime.now());
                 updateById(user);
                 return user;
@@ -39,7 +43,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         if (findByUsername(user.getUsername()) != null) {
             return false;
         }
-        user.setPassword(DigestUtils.md5DigestAsHex(user.getPassword().getBytes()));
+        user.setPassword(DigestUtils.md5DigestAsHex(user.getPassword().getBytes(StandardCharsets.UTF_8)));
         user.setCreateTime(LocalDateTime.now());
         user.setUpdateTime(LocalDateTime.now());
         user.setStatus(1);
@@ -48,6 +52,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     @Override
     public boolean updateUserInfo(User user) {
+        // 个人信息接口不允许修改密码，防止请求体覆盖密码字段。
+        user.setPassword(null);
         user.setUpdateTime(LocalDateTime.now());
         return updateById(user);
     }
@@ -56,9 +62,11 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     public boolean updatePassword(Long userId, String oldPassword, String newPassword) {
         User user = getById(userId);
         if (user != null) {
-            String md5OldPassword = DigestUtils.md5DigestAsHex(oldPassword.getBytes());
-            if (md5OldPassword.equals(user.getPassword())) {
-                user.setPassword(DigestUtils.md5DigestAsHex(newPassword.getBytes()));
+            String md5OldPassword = DigestUtils.md5DigestAsHex(oldPassword.getBytes(StandardCharsets.UTF_8));
+            if (MessageDigest.isEqual(
+                    md5OldPassword.getBytes(StandardCharsets.UTF_8),
+                    user.getPassword().getBytes(StandardCharsets.UTF_8))) {
+                user.setPassword(DigestUtils.md5DigestAsHex(newPassword.getBytes(StandardCharsets.UTF_8)));
                 user.setUpdateTime(LocalDateTime.now());
                 return updateById(user);
             }

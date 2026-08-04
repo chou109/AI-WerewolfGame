@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import com.werewolf.game.util.MapUtil;
 
 /**
  * 游戏玩家控制器
@@ -24,7 +25,7 @@ public class GamePlayerController {
     @GetMapping("/list/{roomId}")
     public Map<String, Object> getPlayersByRoomId(@PathVariable Long roomId) {
         List<GamePlayer> players = gamePlayerService.getPlayersByRoomId(roomId);
-        return Map.of("code", 200, "data", players);
+        return MapUtil.of("code", 200, "data", players);
     }
 
     /**
@@ -34,9 +35,9 @@ public class GamePlayerController {
     public Map<String, Object> getPlayerInfo(@PathVariable Long id) {
         GamePlayer player = gamePlayerService.getById(id);
         if (player != null) {
-            return Map.of("code", 200, "data", player);
+            return MapUtil.of("code", 200, "data", player);
         } else {
-            return Map.of("code", 400, "message", "玩家不存在");
+            return MapUtil.of("code", 400, "message", "玩家不存在");
         }
     }
 
@@ -54,7 +55,7 @@ public class GamePlayerController {
         String playerName = params.containsKey("playerName") ? params.get("playerName").toString() : null;
         
         GamePlayer player = gamePlayerService.addPlayerToRoom(roomId, userId, playerNumber, aiPlayerId, playerName);
-        return Map.of("code", 200, "message", "加入房间成功", "data", player);
+        return MapUtil.of("code", 200, "message", "加入房间成功", "data", player);
     }
 
     /**
@@ -66,9 +67,9 @@ public class GamePlayerController {
         Integer status = Integer.parseInt(params.get("status").toString());
         boolean result = gamePlayerService.updatePlayerStatus(playerId, status);
         if (result) {
-            return Map.of("code", 200, "message", "状态更新成功");
+            return MapUtil.of("code", 200, "message", "状态更新成功");
         } else {
-            return Map.of("code", 400, "message", "更新失败");
+            return MapUtil.of("code", 400, "message", "更新失败");
         }
     }
 
@@ -81,9 +82,9 @@ public class GamePlayerController {
         String role = params.get("role").toString();
         boolean result = gamePlayerService.updatePlayerRole(playerId, role);
         if (result) {
-            return Map.of("code", 200, "message", "角色更新成功");
+            return MapUtil.of("code", 200, "message", "角色更新成功");
         } else {
-            return Map.of("code", 400, "message", "更新失败");
+            return MapUtil.of("code", 400, "message", "更新失败");
         }
     }
 
@@ -96,9 +97,9 @@ public class GamePlayerController {
         Long playerId = Long.parseLong(params.get("playerId").toString());
         boolean result = gamePlayerService.setSheriff(roomId, playerId);
         if (result) {
-            return Map.of("code", 200, "message", "警长设置成功");
+            return MapUtil.of("code", 200, "message", "警长设置成功");
         } else {
-            return Map.of("code", 400, "message", "设置失败");
+            return MapUtil.of("code", 400, "message", "设置失败");
         }
     }
 
@@ -108,7 +109,7 @@ public class GamePlayerController {
     @GetMapping("/alive/{roomId}")
     public Map<String, Object> getAlivePlayers(@PathVariable Long roomId) {
         List<GamePlayer> players = gamePlayerService.getAlivePlayersByRoomId(roomId);
-        return Map.of("code", 200, "data", players);
+        return MapUtil.of("code", 200, "data", players);
     }
     
     /**
@@ -120,9 +121,9 @@ public class GamePlayerController {
         Long playerId = Long.parseLong(params.get("playerId").toString());
         boolean result = gamePlayerService.removePlayerFromRoom(roomId, playerId);
         if (result) {
-            return Map.of("code", 200, "message", "玩家移除成功");
+            return MapUtil.of("code", 200, "message", "玩家移除成功");
         } else {
-            return Map.of("code", 400, "message", "玩家移除失败");
+            return MapUtil.of("code", 400, "message", "玩家移除失败");
         }
     }
 }

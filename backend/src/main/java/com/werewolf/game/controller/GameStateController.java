@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import com.werewolf.game.util.MapUtil;
 
 /**
  * Stores the latest resumable game snapshot for each room.
@@ -28,19 +29,19 @@ public class GameStateController {
     @GetMapping("/{roomId}")
     public Map<String, Object> getState(@PathVariable Long roomId) {
         if (queryRoomStatus(roomId) == null) {
-            return Map.of("code", 404, "message", "房间不存在");
+            return MapUtil.of("code", 404, "message", "房间不存在");
         }
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT state_json, saved_at, update_time FROM game_state_snapshot WHERE room_id = ?",
                 roomId
         );
         if (rows.isEmpty()) {
-            return Map.of("code", 404, "message", "暂无可恢复的游戏状态");
+            return MapUtil.of("code", 404, "message", "暂无可恢复的游戏状态");
         }
         Map<String, Object> row = rows.get(0);
-        return Map.of(
+        return MapUtil.of(
                 "code", 200,
-                "data", Map.of(
+                "data", MapUtil.of(
                         "stateJson", row.get("state_json"),
                         "savedAt", row.get("saved_at"),
                         "updateTime", row.get("update_time")
@@ -54,21 +55,21 @@ public class GameStateController {
         String stateJson = params.get("stateJson") == null ? "" : params.get("stateJson").toString();
         Long savedAt = parseLong(params.getOrDefault("savedAt", 0));
         if (roomId == null || savedAt == null || savedAt < 0 || stateJson.trim().isEmpty()) {
-            return Map.of("code", 400, "message", "游戏快照参数不完整");
+            return MapUtil.of("code", 400, "message", "游戏快照参数不完整");
         }
         if (stateJson.length() > MAX_STATE_JSON_LENGTH) {
-            return Map.of("code", 413, "message", "游戏快照超过8MB限制");
+            return MapUtil.of("code", 413, "message", "游戏快照超过8MB限制");
         }
         Integer roomStatus = queryRoomStatus(roomId);
         if (roomStatus == null) {
-            return Map.of("code", 404, "message", "房间不存在");
+            return MapUtil.of("code", 404, "message", "房间不存在");
         }
         if (roomStatus == 3) {
-            return Map.of("code", 409, "message", "已结束房间不能继续写入游戏快照");
+            return MapUtil.of("code", 409, "message", "已结束房间不能继续写入游戏快照");
         }
         Long currentSavedAt = querySavedAt(roomId);
         if (currentSavedAt != null && savedAt < currentSavedAt) {
-            return Map.of("code", 409, "message", "快照版本较旧，已保留服务端最新状态", "savedAt", currentSavedAt);
+            return MapUtil.of("code", 409, "message", "快照版本较旧，已保留服务端最新状态", "savedAt", currentSavedAt);
         }
         jdbcTemplate.update(
                 "INSERT INTO game_state_snapshot (room_id, state_json, saved_at) VALUES (?, ?, ?) " +
@@ -80,13 +81,13 @@ public class GameStateController {
                 stateJson,
                 savedAt
         );
-        return Map.of("code", 200, "message", "游戏状态已保存", "savedAt", Math.max(savedAt, currentSavedAt == null ? 0 : currentSavedAt));
+        return MapUtil.of("code", 200, "message", "游戏状态已保存", "savedAt", Math.max(savedAt, currentSavedAt == null ? 0 : currentSavedAt));
     }
 
     @DeleteMapping("/{roomId}")
     public Map<String, Object> clearState(@PathVariable Long roomId) {
         jdbcTemplate.update("DELETE FROM game_state_snapshot WHERE room_id = ?", roomId);
-        return Map.of("code", 200, "message", "游戏状态已清除");
+        return MapUtil.of("code", 200, "message", "游戏状态已清除");
     }
 
     private Integer queryRoomStatus(Long roomId) {

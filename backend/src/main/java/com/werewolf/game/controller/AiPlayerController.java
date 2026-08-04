@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import com.werewolf.game.util.MapUtil;
 
 /**
  * AI玩家控制器
@@ -24,7 +25,7 @@ public class AiPlayerController {
     @GetMapping("/available")
     public Map<String, Object> getAvailableAiPlayers() {
         List<AiPlayer> aiPlayers = aiPlayerService.getAvailableAiPlayers();
-        return Map.of("code", 200, "data", aiPlayers);
+        return MapUtil.of("code", 200, "data", aiPlayers);
     }
 
     /**
@@ -34,9 +35,9 @@ public class AiPlayerController {
     public Map<String, Object> getAiPlayerInfo(@PathVariable Long id) {
         AiPlayer aiPlayer = aiPlayerService.getAiPlayerById(id);
         if (aiPlayer != null) {
-            return Map.of("code", 200, "data", aiPlayer);
+            return MapUtil.of("code", 200, "data", aiPlayer);
         } else {
-            return Map.of("code", 400, "message", "AI玩家不存在");
+            return MapUtil.of("code", 400, "message", "AI玩家不存在");
         }
     }
 
@@ -46,7 +47,7 @@ public class AiPlayerController {
     @PostMapping("/create")
     public Map<String, Object> createAiPlayer(@RequestBody AiPlayer aiPlayer) {
         AiPlayer createdAiPlayer = aiPlayerService.createAiPlayer(aiPlayer);
-        return Map.of("code", 200, "message", "AI玩家创建成功", "data", createdAiPlayer);
+        return MapUtil.of("code", 200, "message", "AI玩家创建成功", "data", createdAiPlayer);
     }
 
     /**
@@ -56,9 +57,9 @@ public class AiPlayerController {
     public Map<String, Object> updateAiPlayer(@RequestBody AiPlayer aiPlayer) {
         boolean result = aiPlayerService.updateAiPlayer(aiPlayer);
         if (result) {
-            return Map.of("code", 200, "message", "AI玩家更新成功");
+            return MapUtil.of("code", 200, "message", "AI玩家更新成功");
         } else {
-            return Map.of("code", 400, "message", "AI玩家更新失败");
+            return MapUtil.of("code", 400, "message", "AI玩家更新失败");
         }
     }
 
@@ -69,9 +70,9 @@ public class AiPlayerController {
     public Map<String, Object> deleteAiPlayer(@PathVariable Long id) {
         boolean result = aiPlayerService.deleteAiPlayer(id);
         if (result) {
-            return Map.of("code", 200, "message", "AI玩家删除成功");
+            return MapUtil.of("code", 200, "message", "AI玩家删除成功");
         } else {
-            return Map.of("code", 400, "message", "AI玩家删除失败");
+            return MapUtil.of("code", 400, "message", "AI玩家删除失败");
         }
     }
 }

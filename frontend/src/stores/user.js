@@ -15,17 +15,14 @@ export const useUserStore = defineStore('user', {
   actions: {
     async login(username, password) {
       try {
-        const response = await axios.post('/user/login', {
-          username,
-          password
-        })
+        const response = await axios.post('/user/login', { username, password })
         if (response.data.code === 200) {
           this.userInfo = response.data.data
-          this.token = 'Bearer ' + (response.data.token || '')
-          this.isLoggedIn = true
+          this.token = response.data.token || ''
+          this.isLoggedIn = !!this.token
           localStorage.setItem('token', this.token)
           localStorage.setItem('userInfo', JSON.stringify(this.userInfo))
-          return true
+          return this.isLoggedIn
         }
         return false
       } catch (error) {
@@ -35,7 +32,7 @@ export const useUserStore = defineStore('user', {
     },
     async register(userData) {
       try {
-        const response = await axios.post('http://localhost:8081/api/user/register', userData)
+        const response = await axios.post('/user/register', userData)
         return response.data.code === 200
       } catch (error) {
         console.error('Register error:', error)
@@ -52,7 +49,11 @@ export const useUserStore = defineStore('user', {
     loadUserInfo() {
       const savedUserInfo = localStorage.getItem('userInfo')
       if (savedUserInfo) {
-        this.userInfo = JSON.parse(savedUserInfo)
+        try {
+          this.userInfo = JSON.parse(savedUserInfo)
+        } catch {
+          this.userInfo = null
+        }
       }
     }
   }
