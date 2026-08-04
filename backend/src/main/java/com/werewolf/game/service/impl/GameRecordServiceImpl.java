@@ -106,4 +106,16 @@ public class GameRecordServiceImpl extends ServiceImpl<GameRecordMapper, GameRec
         jdbcTemplate.update("DELETE FROM game_state_snapshot WHERE room_id = ?", record.getRoomId());
         return roomEnded || recorded;
     }
+
+    @Override
+    public java.util.Map<String, Object> getStats() {
+        java.util.List<GameRecord> records = getFinishedGames();
+        java.util.List<String> contents = new java.util.ArrayList<>();
+        for (GameRecord record : records) {
+            if (record.getActionContent() != null && !record.getActionContent().trim().isEmpty()) {
+                contents.add(record.getActionContent());
+            }
+        }
+        return com.werewolf.game.util.GameRecordStatsAggregator.aggregateJson(contents);
+    }
 }

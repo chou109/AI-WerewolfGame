@@ -42,4 +42,9 @@ public interface GameRecordService extends IService<GameRecord> {
     GameRecord getRecordDetail(Long id);
 
     boolean finishGame(GameRecord record, String winner);
+
+    /**
+     * 对局记录统计（玩家场次/胜率/角色偏好、板子胜率）
+     */
+    java.util.Map<String, Object> getStats();
 }

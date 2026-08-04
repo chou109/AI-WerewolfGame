@@ -31,6 +31,45 @@
       </div>
     </el-card>
 
+    <el-card v-loading="statsLoading" class="stats-card">
+      <template #header>
+        <div class="records-header">
+          <h3>{{ $locale === 'zh-CN' ? '对局统计' : 'Game stats' }}</h3>
+          <span class="stats-total">{{ $locale === 'zh-CN' ? '共 ' : 'Total ' }}{{ stats?.totalGames ?? 0 }}{{ $locale === 'zh-CN' ? ' 局' : '' }}</span>
+        </div>
+      </template>
+      <template v-if="stats && stats.boards && stats.boards.length">
+        <h4 class="stats-title">{{ $locale === 'zh-CN' ? '板子胜率' : 'Board win rates' }}</h4>
+        <el-table :data="stats.boards" size="small" style="width:100%">
+          <el-table-column :label="$locale === 'zh-CN' ? '板子' : 'Board'" min-width="140">
+            <template #default="s">{{ boardName(s.row.board) }}</template>
+          </el-table-column>
+          <el-table-column prop="games" :label="$locale === 'zh-CN' ? '局数' : 'Games'" width="80" />
+          <el-table-column prop="goodWins" :label="$locale === 'zh-CN' ? '好人胜' : 'Good wins'" width="90" />
+          <el-table-column prop="wolfWins" :label="$locale === 'zh-CN' ? '狼人胜' : 'Wolf wins'" width="90" />
+          <el-table-column :label="$locale === 'zh-CN' ? '好人胜率' : 'Good win rate'" width="110">
+            <template #default="s">{{ formatRate(s.row.goodWinRate) }}</template>
+          </el-table-column>
+        </el-table>
+        <h4 class="stats-title">{{ $locale === 'zh-CN' ? '玩家统计' : 'Player stats' }}</h4>
+        <el-table :data="stats.players || []" size="small" style="width:100%">
+          <el-table-column prop="name" :label="$locale === 'zh-CN' ? '玩家' : 'Player'" min-width="110" />
+          <el-table-column prop="games" :label="$locale === 'zh-CN' ? '场次' : 'Games'" width="70" />
+          <el-table-column prop="wins" :label="$locale === 'zh-CN' ? '胜场' : 'Wins'" width="70" />
+          <el-table-column :label="$locale === 'zh-CN' ? '胜率' : 'Win rate'" width="90">
+            <template #default="s">{{ formatRate(s.row.winRate) }}</template>
+          </el-table-column>
+          <el-table-column :label="$locale === 'zh-CN' ? '角色分布' : 'Roles'" min-width="180">
+            <template #default="s">{{ distributionText(s.row.roles) }}</template>
+          </el-table-column>
+          <el-table-column :label="$locale === 'zh-CN' ? '常玩板子' : 'Boards'" min-width="160">
+            <template #default="s">{{ distributionText(s.row.boards) }}</template>
+          </el-table-column>
+          <el-table-column prop="speechCount" :label="$locale === 'zh-CN' ? '发言次数' : 'Speeches'" width="90" />
+        </el-table>
+      </template>
+      <el-empty v-else :description="$locale === 'zh-CN' ? '暂无统计数据' : 'No stats yet'" />
+    </el-card>
     <el-dialog v-model="detailVisible" :title="$locale === 'zh-CN' ? '对局详情' : 'Game details'" width="760px">
       <template v-if="selectedRecord">
         <el-descriptions :column="2" border>
@@ -104,6 +143,8 @@ const $t = proxy.$t; const $locale = proxy.$locale
 const currentLocale = () => ($locale?.value || $locale) === 'en-US' ? 'en-US' : 'zh-CN'
 const records = ref([]); const page = ref(1); const size = ref(10); const total = computed(() => records.value.length)
 const loading = ref(false)
+const statsLoading = ref(false)
+const stats = ref(null)
 const detailVisible = ref(false)
 const selectedRecord = ref(null)
 const speechStats = computed(() => {
@@ -173,6 +214,24 @@ const formatDuration = (start, end) => {
   return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m ${seconds % 60}s`
 }
 const boardName = key => key ? $t(`gameBoard.${key}`) : '-'
+const formatRate = rate => `${Number(rate || 0).toFixed(1)}%`
+const distributionText = map => {
+  if (!map || typeof map !== 'object') return '-'
+  const entries = Object.entries(map).sort((a, b) => b[1] - a[1])
+  if (!entries.length) return '-'
+  return entries.slice(0, 4).map(([key, count]) => `${key}×${count}`).join('，')
+}
+const fetchStats = async () => {
+  statsLoading.value = true
+  try {
+    const response = await axios.get('/game/record/stats')
+    if (response.data?.code === 200) stats.value = response.data.data
+  } catch {
+    stats.value = null
+  } finally {
+    statsLoading.value = false
+  }
+}
 const fetchRecords = async () => {
   loading.value = true
   try {
@@ -247,11 +306,17 @@ const viewRecord = async record => {
   selectedRecord.value = target
   detailVisible.value = true
 }
-onMounted(fetchRecords)
+onMounted(() => {
+  fetchRecords()
+  fetchStats()
+})
 </script>
 
 <style scoped>
 .records-page { padding: 10px 0; }
+.stats-card { margin-top: 18px; }
+.stats-total { color: #666; font-size: 13px; }
+.stats-title { margin: 14px 0 10px; font-size: 14px; color: #333; }
 .records-page h2 { margin-bottom: 20px; }
 .records-header { display:flex; align-items:center; justify-content:space-between; }
 .records-header h3 { margin:0; }

@@ -50,6 +50,11 @@ public class GameRecordController {
         }
     }
 
+    @GetMapping("/stats")
+    public Map<String, Object> getStats() {
+        return MapUtil.of("code", 200, "data", gameRecordService.getStats());
+    }
+
     @GetMapping("/finished")
     public Map<String, Object> getFinishedGames() {
         return MapUtil.of("code", 200, "data", gameRecordService.getFinishedGameSummaries());
