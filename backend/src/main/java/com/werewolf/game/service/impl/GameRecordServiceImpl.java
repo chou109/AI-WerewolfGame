@@ -68,6 +68,21 @@ public class GameRecordServiceImpl extends ServiceImpl<GameRecordMapper, GameRec
     }
 
     @Override
+    public List<GameRecord> getFinishedGameSummaries() {
+        List<GameRecord> records = lambdaQuery()
+                .eq(GameRecord::getActionType, "game_end")
+                .orderByDesc(GameRecord::getCreateTime)
+                .list();
+        records.forEach(record -> record.setActionContent(null));
+        return records;
+    }
+
+    @Override
+    public GameRecord getRecordDetail(Long id) {
+        return id == null ? null : getById(id);
+    }
+
+    @Override
     @Transactional
     public synchronized boolean finishGame(GameRecord record, String winner) {
         GameRoom room = gameRoomService.getById(record.getRoomId());

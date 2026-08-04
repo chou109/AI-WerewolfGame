@@ -52,7 +52,19 @@ public class GameRecordController {
 
     @GetMapping("/finished")
     public Map<String, Object> getFinishedGames() {
-        return MapUtil.of("code", 200, "data", gameRecordService.getFinishedGames());
+        return MapUtil.of("code", 200, "data", gameRecordService.getFinishedGameSummaries());
+    }
+
+    /**
+     * 获取对局记录详情（含完整复盘数据）
+     */
+    @GetMapping("/detail/{id}")
+    public Map<String, Object> getRecordDetail(@PathVariable Long id) {
+        GameRecord record = gameRecordService.getRecordDetail(id);
+        if (record != null) {
+            return MapUtil.of("code", 200, "data", record);
+        }
+        return MapUtil.of("code", 400, "message", "记录不存在");
     }
 
     @PostMapping("/finish")

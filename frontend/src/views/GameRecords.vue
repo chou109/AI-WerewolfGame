@@ -54,9 +54,15 @@
               {{ player.number }}号 {{ player.name }} · {{ player.role }}
             </span>
           </div>
-          <h4>{{ $locale === 'zh-CN' ? '末段公开记录' : 'Recent public log' }}</h4>
+          <h4>{{ $locale === 'zh-CN' ? '公开对局记录' : 'Full public log' }}</h4>
           <div class="record-log">
             <p v-for="(message, index) in selectedRecord.payload.publicMessages || []" :key="index"><strong>{{ message.sender }}：</strong>{{ message.content }}</p>
+          </div>
+          <h4 v-if="(selectedRecord.payload.voteHistory || []).length">{{ $locale === 'zh-CN' ? '投票记录' : 'Voting log' }}</h4>
+          <div v-for="(voteRound, index) in selectedRecord.payload.voteHistory || []" :key="index" class="vote-round">
+            <strong>{{ voteRound.label || `${$locale === 'zh-CN' ? '第' : 'Round '}${index + 1}` }}：</strong>
+            <span v-if="(voteRound.ballots || []).length">{{ voteRound.ballots.map(ballot => `${playerLabel(ballot.voterId)} → ${playerLabel(ballot.targetId)}`).join('；') }}</span>
+            <span v-if="(voteRound.abstainVoterIds || []).length">；{{ $locale === 'zh-CN' ? '弃票' : 'Abstained' }}：{{ voteRound.abstainVoterIds.map(playerLabel).join('、') }}</span>
           </div>
         </template>
       </template>
@@ -145,7 +151,24 @@ const fetchRecords = async () => {
     loading.value = false
   }
 }
-const viewRecord = record => { selectedRecord.value = record; detailVisible.value = true }
+const playerLabel = playerId => {
+  const player = (selectedRecord.value?.payload?.players || []).find(p => Number(p.id) === Number(playerId))
+  return player ? `${player.number}号${player.name}` : String(playerId ?? '?')
+}
+const viewRecord = async record => {
+  let target = record
+  if (record.id && !String(record.id).startsWith('room-')) {
+    try {
+      const response = await axios.get(`/game/record/detail/${record.id}`)
+      const detail = response.data?.code === 200 ? response.data.data : null
+      if (detail) target = { ...record, ...detail, payload: parsePayload(detail.actionContent) }
+    } catch (error) {
+      console.warn('Game record detail load failed:', error)
+    }
+  }
+  selectedRecord.value = target
+  detailVisible.value = true
+}
 onMounted(fetchRecords)
 </script>
 
@@ -161,4 +184,5 @@ onMounted(fetchRecords)
 .record-log { max-height:320px; overflow:auto; border-top:1px solid #e5e5e5; }
 .record-log p { margin:0; padding:9px 2px; border-bottom:1px solid #ededed; line-height:1.55; }
 .recovered-record-alert { margin-top:18px; }
+.vote-round { margin-bottom:8px; font-size:13px; color:#555; }
 </style>

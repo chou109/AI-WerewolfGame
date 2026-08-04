@@ -31,5 +31,15 @@ public interface GameRecordService extends IService<GameRecord> {
 
     List<GameRecord> getFinishedGames();
 
+    /**
+     * 获取已结束对局的轻量摘要（不含完整 actionContent）
+     */
+    List<GameRecord> getFinishedGameSummaries();
+
+    /**
+     * 获取对局记录详情（含完整复盘数据）
+     */
+    GameRecord getRecordDetail(Long id);
+
     boolean finishGame(GameRecord record, String winner);
 }

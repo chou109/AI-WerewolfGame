@@ -935,6 +935,39 @@ const buildGameSnapshot = stage => {
   gameResult: snapshotClone(gameResult.value)
   })
 }
+const buildRecordPayload = (source, winner, finishedAt) => {
+  const players = source?.players || players.value
+  const room = source?.roomInfo || roomInfo.value
+  const messages = source?.dialogMessages || dialogMessages.value
+  const day = source?.currentDay ?? currentDay.value
+  const round = source?.currentRound ?? currentRound.value
+  return {
+    winner,
+    board: room?.gameBoard || boardRules.value.key,
+    playerCount: room?.playerCount || players.length,
+    day,
+    round,
+    startedAt: room?.startTime || null,
+    finishedAt,
+    sheriff: {
+      electionDone: source?.sheriffElectionDone ?? sheriffElectionDone.value,
+      badgeLost: source?.sheriffBadgeLost ?? sheriffBadgeLost.value
+    },
+    players: players.map(player => ({
+      id: player.id,
+      number: player.playerNumber,
+      name: player.playerName,
+      role: player.role,
+      alive: player.isAlive,
+      isSheriff: Boolean(player.isSheriff)
+    })),
+    voteHistory: source?.voteHistory || voteHistory.value || [],
+    publicMessages: messages
+      .filter(item => (item.visibility || 'public') === 'public')
+      .map(item => ({ sender: item.sender, content: String(item.content || '').slice(0, 2000), time: item.time, type: item.type }))
+  }
+}
+
 const persistGameSnapshot = (stage = resumeStage.value) => {
   // 仅房主写入本地与服务端快照；成员视角以服务端投影为准，避免完整状态回写或泄漏
   if (!players.value.length || !gameStarted.value || !isRoomOwner.value) return
@@ -1003,20 +1036,7 @@ const restoreGameSnapshot = async () => {
     const result = snapshot.gameResult
     const finishedDate = new Date(result.finishedAt || Date.now())
     const finishedAt = Number.isNaN(finishedDate.getTime()) ? new Date().toISOString() : finishedDate.toISOString()
-    const actionContent = JSON.stringify({
-      winner: result.winner,
-      board: snapshot.roomInfo?.gameBoard || boardRules.value.key,
-      playerCount: snapshot.roomInfo?.playerCount || snapshot.players.length,
-      day: snapshot.currentDay || 1,
-      round: snapshot.currentRound || 1,
-      startedAt: snapshot.roomInfo?.startTime || null,
-      finishedAt,
-      players: snapshot.players.map(player => ({ number: player.playerNumber, name: player.playerName, role: player.role, alive: player.isAlive })),
-      publicMessages: (snapshot.dialogMessages || [])
-        .filter(item => (item.visibility || 'public') === 'public')
-        .slice(-40)
-        .map(item => ({ sender: item.sender, content: String(item.content || '').slice(0, 240), time: item.time, type: item.type }))
-    })
+    const actionContent = JSON.stringify(buildRecordPayload(snapshot, result.winner, finishedAt))
     try {
       await axios.post('/game/record/finish', {
         roomId: Number(roomId),
@@ -1475,20 +1495,7 @@ const finishGame = (winner, message) => {
   localStorage.removeItem(gameSnapshotStorageKey)
   roomInfo.value = { ...roomInfo.value, status: 3, winner, endTime: finishedAt.toISOString() }
   const pendingSnapshotWrites = snapshotWriteQueue.catch(() => {})
-  const actionContent = JSON.stringify({
-    winner,
-    board: roomInfo.value.gameBoard || boardRules.value.key,
-    playerCount: roomInfo.value.playerCount || players.value.length,
-    day: currentDay.value,
-    round: currentRound.value,
-    startedAt: roomInfo.value.startTime || null,
-    finishedAt: finishedAt.toISOString(),
-    players: players.value.map(player => ({ number: player.playerNumber, name: player.playerName, role: player.role, alive: player.isAlive })),
-    publicMessages: dialogMessages.value
-      .filter(item => (item.visibility || 'public') === 'public')
-      .slice(-40)
-      .map(item => ({ sender: item.sender, content: String(item.content || '').slice(0, 240), time: item.time, type: item.type }))
-  })
+  const actionContent = JSON.stringify(buildRecordPayload(null, winner, finishedAt.toISOString()))
   finalizationPromise = (async () => {
     const recordTask = (async () => {
       try {
