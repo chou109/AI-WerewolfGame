@@ -11,7 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
+import java.util.Objects;
 
 /**
  * 游戏房间服务实现类
@@ -41,12 +41,12 @@ public class GameRoomServiceImpl extends ServiceImpl<GameRoomMapper, GameRoom> i
     @Override
     public boolean updateRoomStatus(Long roomId, Integer status) {
         GameRoom room = getById(roomId);
-        if (room != null) {
-            room.setStatus(status);
-            room.setUpdateTime(LocalDateTime.now());
-            return updateById(room);
-        }
-        return false;
+        if (room == null || status == null) return false;
+        if (Objects.equals(room.getStatus(), status)) return true;
+        if (!isValidTransition(room.getStatus(), status)) return false;
+        room.setStatus(status);
+        room.setUpdateTime(LocalDateTime.now());
+        return updateById(room);
     }
 
     @Override
@@ -68,7 +68,8 @@ public class GameRoomServiceImpl extends ServiceImpl<GameRoomMapper, GameRoom> i
     @Transactional
     public boolean startGame(Long roomId) {
         GameRoom room = getById(roomId);
-        if (room != null) {
+        if (room != null && Objects.equals(room.getStatus(), 2)) return true;
+        if (room != null && isValidTransition(room.getStatus(), 2)) {
             jdbcTemplate.update(
                     "UPDATE game_player SET is_sheriff = 0, role = NULL, update_time = CURRENT_TIMESTAMP " +
                             "WHERE room_id = ? AND status = 1",
@@ -85,15 +86,27 @@ public class GameRoomServiceImpl extends ServiceImpl<GameRoomMapper, GameRoom> i
     }
 
     @Override
+    @Transactional
     public boolean endGame(Long roomId, String winner) {
         GameRoom room = getById(roomId);
-        if (room != null) {
+        if (room != null && Objects.equals(room.getStatus(), 3)) {
+            return Objects.equals(room.getWinner(), winner);
+        }
+        if (room != null && isValidTransition(room.getStatus(), 3)) {
             room.setStatus(3); // 3-已结束
             room.setEndTime(LocalDateTime.now());
             room.setWinner(winner);
             return updateById(room);
         }
         return false;
+    }
+
+    /**
+     * 游戏状态只能向前推进，避免恢复页面或重复请求把已结束房间重新打开。
+     */
+    private boolean isValidTransition(Integer currentStatus, Integer nextStatus) {
+        return Objects.equals(currentStatus, 1) && Objects.equals(nextStatus, 2)
+                || Objects.equals(currentStatus, 2) && Objects.equals(nextStatus, 3);
     }
 
     @Override

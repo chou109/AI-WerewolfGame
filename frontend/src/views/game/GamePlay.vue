@@ -838,6 +838,7 @@ const roleForSeer = player => {
 }
 
 const gameSnapshotStorageKey = `werewolf:game-state:${roomId}`
+const finalizedSnapshotStorageKey = `${gameSnapshotStorageKey}:finalized`
 const snapshotClone = value => JSON.parse(JSON.stringify(value))
 const clearAndAssignReactive = (target, source) => {
   Object.keys(target).forEach(key => delete target[key])
@@ -951,6 +952,13 @@ const restoreGameSnapshot = async () => {
     return false
   }
   if (snapshot.gameResult?.winner) {
+    if (localStorage.getItem(finalizedSnapshotStorageKey) === String(snapshot.savedAt || '')) {
+      localStorage.removeItem(gameSnapshotStorageKey)
+      try { await axios.delete(`/game/state/${roomId}`) } catch {}
+      roomInfo.value = { ...roomInfo.value, status: 3, winner: snapshot.gameResult.winner }
+      return false
+    }
+    localStorage.setItem(finalizedSnapshotStorageKey, String(snapshot.savedAt || Date.now()))
     const result = snapshot.gameResult
     const finishedDate = new Date(result.finishedAt || Date.now())
     const finishedAt = Number.isNaN(finishedDate.getTime()) ? new Date().toISOString() : finishedDate.toISOString()
@@ -1083,6 +1091,7 @@ const startGame = async () => {
   players.value.forEach(p => { if (p.aiPlayerId) p.userId = -1 })
   await startGamePhase()
   gameStarted.value = true
+  localStorage.removeItem(finalizedSnapshotStorageKey)
   notifyPlayerRoles()
   resumeStage.value = 'night'
   persistGameSnapshot('night')

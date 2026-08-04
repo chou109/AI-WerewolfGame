@@ -20,11 +20,16 @@ import java.util.Map;
 @RequestMapping("/game/state")
 public class GameStateController {
 
+    private static final int MAX_STATE_JSON_LENGTH = 8 * 1024 * 1024;
+
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @GetMapping("/{roomId}")
     public Map<String, Object> getState(@PathVariable Long roomId) {
+        if (queryRoomStatus(roomId) == null) {
+            return Map.of("code", 404, "message", "房间不存在");
+        }
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT state_json, saved_at, update_time FROM game_state_snapshot WHERE room_id = ?",
                 roomId
@@ -45,9 +50,26 @@ public class GameStateController {
 
     @PutMapping
     public Map<String, Object> saveState(@RequestBody Map<String, Object> params) {
-        Long roomId = Long.parseLong(params.get("roomId").toString());
-        String stateJson = params.get("stateJson").toString();
-        Long savedAt = Long.parseLong(params.getOrDefault("savedAt", 0).toString());
+        Long roomId = parseLong(params.get("roomId"));
+        String stateJson = params.get("stateJson") == null ? "" : params.get("stateJson").toString();
+        Long savedAt = parseLong(params.getOrDefault("savedAt", 0));
+        if (roomId == null || savedAt == null || savedAt < 0 || stateJson.trim().isEmpty()) {
+            return Map.of("code", 400, "message", "游戏快照参数不完整");
+        }
+        if (stateJson.length() > MAX_STATE_JSON_LENGTH) {
+            return Map.of("code", 413, "message", "游戏快照超过8MB限制");
+        }
+        Integer roomStatus = queryRoomStatus(roomId);
+        if (roomStatus == null) {
+            return Map.of("code", 404, "message", "房间不存在");
+        }
+        if (roomStatus == 3) {
+            return Map.of("code", 409, "message", "已结束房间不能继续写入游戏快照");
+        }
+        Long currentSavedAt = querySavedAt(roomId);
+        if (currentSavedAt != null && savedAt < currentSavedAt) {
+            return Map.of("code", 409, "message", "快照版本较旧，已保留服务端最新状态", "savedAt", currentSavedAt);
+        }
         jdbcTemplate.update(
                 "INSERT INTO game_state_snapshot (room_id, state_json, saved_at) VALUES (?, ?, ?) " +
                         "ON DUPLICATE KEY UPDATE " +
@@ -58,12 +80,38 @@ public class GameStateController {
                 stateJson,
                 savedAt
         );
-        return Map.of("code", 200, "message", "游戏状态已保存");
+        return Map.of("code", 200, "message", "游戏状态已保存", "savedAt", Math.max(savedAt, currentSavedAt == null ? 0 : currentSavedAt));
     }
 
     @DeleteMapping("/{roomId}")
     public Map<String, Object> clearState(@PathVariable Long roomId) {
         jdbcTemplate.update("DELETE FROM game_state_snapshot WHERE room_id = ?", roomId);
         return Map.of("code", 200, "message", "游戏状态已清除");
+    }
+
+    private Integer queryRoomStatus(Long roomId) {
+        List<Integer> statuses = jdbcTemplate.query(
+                "SELECT status FROM game_room WHERE id = ?",
+                (resultSet, rowNum) -> resultSet.getInt("status"),
+                roomId
+        );
+        return statuses.isEmpty() ? null : statuses.get(0);
+    }
+
+    private Long querySavedAt(Long roomId) {
+        List<Long> timestamps = jdbcTemplate.query(
+                "SELECT saved_at FROM game_state_snapshot WHERE room_id = ?",
+                (resultSet, rowNum) -> resultSet.getLong("saved_at"),
+                roomId
+        );
+        return timestamps.isEmpty() ? null : timestamps.get(0);
+    }
+
+    private Long parseLong(Object value) {
+        try {
+            return value == null ? null : Long.valueOf(value.toString());
+        } catch (NumberFormatException exception) {
+            return null;
+        }
     }
 }

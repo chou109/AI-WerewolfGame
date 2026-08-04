@@ -76,8 +76,11 @@ public class GameRoomController {
      */
     @PutMapping("/updateStatus")
     public Map<String, Object> updateRoomStatus(@RequestBody Map<String, Object> params) {
-        Long roomId = Long.parseLong(params.get("roomId").toString());
-        Integer status = Integer.parseInt(params.get("status").toString());
+        Long roomId = parseLong(params.get("roomId"));
+        Integer status = parseInteger(params.get("status"));
+        if (roomId == null || status == null) {
+            return Map.of("code", 400, "message", "房间状态参数不完整");
+        }
         boolean result = gameRoomService.updateRoomStatus(roomId, status);
         if (result) {
             return Map.of("code", 200, "message", "状态更新成功");
@@ -91,7 +94,8 @@ public class GameRoomController {
      */
     @PutMapping("/start")
     public Map<String, Object> startGame(@RequestBody Map<String, Object> params) {
-        Long roomId = Long.parseLong(params.get("roomId").toString());
+        Long roomId = parseLong(params.get("roomId"));
+        if (roomId == null) return Map.of("code", 400, "message", "房间编号无效");
         boolean result = gameRoomService.startGame(roomId);
         if (result) {
             return Map.of("code", 200, "message", "游戏开始");
@@ -105,8 +109,9 @@ public class GameRoomController {
      */
     @PutMapping("/end")
     public Map<String, Object> endGame(@RequestBody Map<String, Object> params) {
-        Long roomId = Long.parseLong(params.get("roomId").toString());
-        String winner = params.get("winner").toString();
+        Long roomId = parseLong(params.get("roomId"));
+        String winner = params.get("winner") == null ? "" : params.get("winner").toString().trim();
+        if (roomId == null || winner.isEmpty()) return Map.of("code", 400, "message", "结束房间参数不完整");
         boolean result = gameRoomService.endGame(roomId, winner);
         if (result) {
             return Map.of("code", 200, "message", "游戏结束");
@@ -125,6 +130,22 @@ public class GameRoomController {
             return Map.of("code", 200, "message", "房间删除成功");
         } else {
             return Map.of("code", 400, "message", "房间删除失败");
+        }
+    }
+
+    private Long parseLong(Object value) {
+        try {
+            return value == null ? null : Long.valueOf(value.toString());
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
+    private Integer parseInteger(Object value) {
+        try {
+            return value == null ? null : Integer.valueOf(value.toString());
+        } catch (NumberFormatException exception) {
+            return null;
         }
     }
 }
