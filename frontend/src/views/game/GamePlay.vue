@@ -364,6 +364,7 @@ import axios from 'axios'
 import { useTypewriter } from '../../composables/useTypewriter.js'
 import { getVoiceLanguageKey, getVoiceLanguageLabel, groupVoicesByLanguage, speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from '../../composables/useSpeechSynthesis.js'
 import { getAiPlayerKey, getGlobalApiKey } from '../../utils/apiKeys.js'
+import { useUserStore } from '../../stores/user'
 import { BOARD_RULES, PACK_WOLF_ROLES, WEREWOLF_KNOWLEDGE, WOLF_TEAM_ROLES, getBoardRules, getRoleSummary, isPackWolfRole, isWolfTeamRole } from '../../game/rules.js'
 
 const { proxy } = getCurrentInstance()
@@ -372,6 +373,7 @@ const $locale = proxy.$locale
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 const roomId = route.params.roomId || route.params.id || 1
 
 const { displayedText: typewriterDisplayedText, isTyping, startTypewriter, pauseTypewriter, resumeTypewriter, skipToEnd, setSpeed } = useTypewriter()
@@ -418,6 +420,10 @@ const currentDay = ref(1)
 const currentPhase = ref('night')
 const gameStarted = ref(false)
 const roomInfo = ref({})
+const isRoomOwner = computed(() => {
+  const uid = Number(userStore.userInfo?.id)
+  return uid > 0 && Number(roomInfo.value.creatorId) === uid
+})
 const roleDealVisible = ref(false)
 const roleDealStage = ref('shuffle')
 const roleDealMessage = ref('身份牌洗牌中')
@@ -919,19 +925,28 @@ const buildGameSnapshot = stage => {
   })
 }
 const persistGameSnapshot = (stage = resumeStage.value) => {
-  if (!players.value.length || !gameStarted.value) return
+  // 仅房主写入本地与服务端快照；成员视角以服务端投影为准，避免完整状态回写或泄漏
+  if (!players.value.length || !gameStarted.value || !isRoomOwner.value) return
   const snapshot = buildGameSnapshot(stage)
   const serialized = JSON.stringify(snapshot)
   localStorage.setItem(gameSnapshotStorageKey, serialized)
+  // 语音配置仅属于本机，不随快照上传服务端
+  const remotePayload = { ...snapshot }
+  delete remotePayload.playerVoiceConfigs
   snapshotWriteQueue = snapshotWriteQueue
     .catch(() => {})
-    .then(() => axios.put('/game/state', { roomId: Number(roomId), savedAt: snapshot.savedAt, stateJson: serialized }))
+    .then(() => axios.put('/game/state', { roomId: Number(roomId), savedAt: snapshot.savedAt, stateJson: JSON.stringify(remotePayload) }))
     .catch(() => {})
   return snapshotWriteQueue
 }
 const readRemoteGameSnapshot = async () => {
   try {
-    const response = await axios.get(`/game/state/${roomId}`)
+    const params = {}
+    if (!isRoomOwner.value) {
+      const viewer = players.value.find(player => Number(player.userId) === Number(userStore.userInfo?.id))
+      if (viewer) params.viewerId = viewer.id
+    }
+    const response = await axios.get(`/game/state/${roomId}`, { params })
     const stateJson = response.data?.code === 200 ? response.data.data?.stateJson : null
     return stateJson ? JSON.parse(stateJson) : null
   } catch {
@@ -939,23 +954,37 @@ const readRemoteGameSnapshot = async () => {
   }
 }
 const restoreGameSnapshot = async () => {
+  const remoteSnapshot = await readRemoteGameSnapshot()
   let localSnapshot = null
   try { localSnapshot = JSON.parse(localStorage.getItem(gameSnapshotStorageKey) || 'null') } catch { localSnapshot = null }
-  const remoteSnapshot = await readRemoteGameSnapshot()
-  const snapshot = [localSnapshot, remoteSnapshot]
-    .filter(item => item && Number(item.roomId) === Number(roomId) && Array.isArray(item.players))
-    .sort((a, b) => Number(b.savedAt || 0) - Number(a.savedAt || 0))[0]
+  let snapshot = null
+  if (isRoomOwner.value) {
+    snapshot = [localSnapshot, remoteSnapshot]
+      .filter(item => item && Number(item.roomId) === Number(roomId) && Array.isArray(item.players))
+      .sort((a, b) => Number(b.savedAt || 0) - Number(a.savedAt || 0))[0]
+  } else {
+    // 非房主只信任服务端按本人视角投影的结果，本地若残留完整快照立即清除
+    localStorage.removeItem(gameSnapshotStorageKey)
+    snapshot = remoteSnapshot && Number(remoteSnapshot.roomId) === Number(roomId) && Array.isArray(remoteSnapshot.players)
+      ? remoteSnapshot
+      : null
+  }
   if (!snapshot || snapshot.players.length !== players.value.length) {
     if (Number(roomInfo.value.status) === 3) {
       localStorage.removeItem(gameSnapshotStorageKey)
-      try { await axios.delete(`/game/state/${roomId}`) } catch {}
+      if (isRoomOwner.value) { try { await axios.delete(`/game/state/${roomId}`) } catch {} }
     }
     return false
   }
   if (snapshot.gameResult?.winner) {
+    if (!isRoomOwner.value) {
+      localStorage.removeItem(gameSnapshotStorageKey)
+      roomInfo.value = { ...roomInfo.value, status: 3, winner: snapshot.gameResult.winner }
+      return false
+    }
     if (localStorage.getItem(finalizedSnapshotStorageKey) === String(snapshot.savedAt || '')) {
       localStorage.removeItem(gameSnapshotStorageKey)
-      try { await axios.delete(`/game/state/${roomId}`) } catch {}
+      if (isRoomOwner.value) { try { await axios.delete(`/game/state/${roomId}`) } catch {} }
       roomInfo.value = { ...roomInfo.value, status: 3, winner: snapshot.gameResult.winner }
       return false
     }
@@ -990,13 +1019,13 @@ const restoreGameSnapshot = async () => {
       try { await axios.put('/game/room/end', { roomId: Number(roomId), winner: result.winner }) } catch {}
     }
     localStorage.removeItem(gameSnapshotStorageKey)
-    try { await axios.delete(`/game/state/${roomId}`) } catch {}
+    if (isRoomOwner.value) { try { await axios.delete(`/game/state/${roomId}`) } catch {} }
     roomInfo.value = { ...roomInfo.value, status: 3, winner: result.winner, endTime: finishedAt }
     return false
   }
   if (Number(roomInfo.value.status) === 3) {
     localStorage.removeItem(gameSnapshotStorageKey)
-    try { await axios.delete(`/game/state/${roomId}`) } catch {}
+    if (isRoomOwner.value) { try { await axios.delete(`/game/state/${roomId}`) } catch {} }
     return false
   }
   lastSnapshotSavedAt = Number(snapshot.savedAt || 0)
@@ -1052,7 +1081,7 @@ const restoreGameSnapshot = async () => {
   Object.assign(evilKnightState, snapshot.evilKnightState || {})
   Object.assign(shapeshifterState, snapshot.shapeshifterState || {})
   Object.assign(cursedFoxState, snapshot.cursedFoxState || {})
-  Object.assign(witchInventory, snapshot.witchInventory || {})
+  if (snapshot.witchInventory) Object.assign(witchInventory, snapshot.witchInventory)
   Object.assign(nightState, createEmptyNightState(), snapshot.nightState || {})
   clearAndAssignReactive(playerMemories, snapshot.playerMemories)
   Object.values(playerMemories).forEach(memory => {
@@ -1060,8 +1089,10 @@ const restoreGameSnapshot = async () => {
       memory.privateKnowledge = memory.privateKnowledge.filter(item => !/主持人已确认.*交易失败|privately confirmed.*transaction failed/i.test(String(item)))
     }
   })
-  clearAndAssignReactive(playerVoiceConfigs, snapshot.playerVoiceConfigs)
-  savePlayerVoiceConfigs()
+  if (snapshot.playerVoiceConfigs) {
+    clearAndAssignReactive(playerVoiceConfigs, snapshot.playerVoiceConfigs)
+    savePlayerVoiceConfigs()
+  }
   idiotFlippedIds.clear(); (snapshot.idiotFlippedIds || []).forEach(id => idiotFlippedIds.add(id))
   bomberSuppressedIds.clear(); (snapshot.bomberSuppressedIds || []).forEach(id => bomberSuppressedIds.add(id))
   specialDeathProcessedIds.clear(); (snapshot.specialDeathProcessedIds || []).forEach(id => specialDeathProcessedIds.add(id))
@@ -1072,6 +1103,11 @@ const restoreGameSnapshot = async () => {
   typewriterSpeed.value = snapshot.typewriterSpeed || typewriterSpeed.value
   currentViewMode.value = snapshot.currentViewMode || 'god'
   selectedPlayerId.value = snapshot.selectedPlayerId || players.value[0]?.id || null
+  if (!isRoomOwner.value) {
+    const viewer = players.value.find(player => Number(player.userId) === Number(userStore.userInfo?.id))
+    currentViewMode.value = 'player'
+    selectedPlayerId.value = viewer?.id || players.value[0]?.id || null
+  }
   gameResult.value = snapshot.gameResult || null
   resumeStage.value = snapshot.resumeStage || 'night'
   roleDealVisible.value = false
@@ -3376,9 +3412,13 @@ onMounted(async () => {
   window.speechSynthesis?.addEventListener('voiceschanged', loadBrowserVoices)
   const restored = await loadGameData({ restore: true })
   if (restored && gameStarted.value) {
-    ElMessage.success('已恢复本房间的游戏状态，将从上次安全节点继续。')
-    const version = ++gameLoopVersion
-    void runGameLoop(version, resumeStage.value)
+    if (isRoomOwner.value) {
+      ElMessage.success('已恢复本房间的游戏状态，将从上次安全节点继续。')
+      const version = ++gameLoopVersion
+      void runGameLoop(version, resumeStage.value)
+    } else {
+      ElMessage.info('已恢复本房间的视角状态；游戏流程由房主推进。')
+    }
   }
 })
 onUnmounted(() => {

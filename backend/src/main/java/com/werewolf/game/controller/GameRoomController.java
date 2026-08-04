@@ -5,6 +5,7 @@ import com.werewolf.game.service.GameRoomService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import javax.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.Map;
 import com.werewolf.game.util.MapUtil;
@@ -23,7 +24,15 @@ public class GameRoomController {
      * 创建游戏房间
      */
     @PostMapping("/create")
-    public Map<String, Object> createRoom(@RequestBody GameRoom gameRoom) {
+    public Map<String, Object> createRoom(@RequestBody GameRoom gameRoom, HttpServletRequest request) {
+        Object userId = request.getAttribute("userId");
+        if (userId != null) {
+            try {
+                gameRoom.setCreatorId(Long.valueOf(userId.toString()));
+            } catch (NumberFormatException ignored) {
+                // 保留请求体中的 creatorId
+            }
+        }
         GameRoom room = gameRoomService.createRoom(gameRoom);
         return MapUtil.of("code", 200, "message", "房间创建成功", "data", room);
     }

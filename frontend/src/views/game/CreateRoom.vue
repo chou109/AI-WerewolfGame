@@ -128,8 +128,7 @@ const createRoom = async () => {
       playerCount: Number(form.playerCount),
       gameBoard: form.gameBoard,
       roomCode: form.password,
-      status: 1,
-      creatorId: 1
+      status: 1
     })
     loading.value = false
     if (success) {
