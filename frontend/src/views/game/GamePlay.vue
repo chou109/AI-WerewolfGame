@@ -66,7 +66,7 @@
       </div>
       <div v-if="currentViewMode === 'player'" class="view-player-select">
         <el-select v-model="selectedPlayerId" :placeholder="$t('gamePlay.selectPlayer')" size="small" style="width:140px">
-          <el-option v-for="p in alivePlayers" :key="p.id" :label="p.playerName" :value="p.id" />
+          <el-option v-for="p in players" :key="p.id" :label="getViewerLabel(p)" :value="p.id" />
         </el-select>
       </div>
       <span v-if="isGamePaused" class="paused-status">{{ $locale === 'zh-CN' ? '游戏已暂停' : 'GAME PAUSED' }}</span>
@@ -77,7 +77,7 @@
       <!-- Left: Players 1-6 -->
       <div class="side-panel">
         <div class="player-badges">
-          <div v-for="pos in leftPositions" :key="pos.number" class="player-badge" :class="{ occupied: pos.player, locked: pos.locked, dead: pos.player && !pos.player.isAlive, speaking: pos.player?.isSpeaking }" @click="handlePositionClick(pos)">
+          <div v-for="pos in leftPositions" :key="pos.number" class="player-badge" :class="{ occupied: pos.player, locked: pos.locked, dead: pos.player && !pos.player.isAlive, speaking: pos.player?.isSpeaking, viewing: currentViewMode === 'player' && selectedPlayerId === pos.player?.id }" @click="handlePositionClick(pos)">
             <template v-if="pos.player">
               <div class="badge-frame">
                 <div class="badge-ring"></div>
@@ -244,7 +244,7 @@
       <!-- Right: Players 7-12 -->
       <div class="side-panel">
         <div class="player-badges">
-          <div v-for="pos in rightPositions" :key="pos.number" class="player-badge" :class="{ occupied: pos.player, locked: pos.locked, dead: pos.player && !pos.player.isAlive, speaking: pos.player?.isSpeaking }" @click="handlePositionClick(pos)">
+          <div v-for="pos in rightPositions" :key="pos.number" class="player-badge" :class="{ occupied: pos.player, locked: pos.locked, dead: pos.player && !pos.player.isAlive, speaking: pos.player?.isSpeaking, viewing: currentViewMode === 'player' && selectedPlayerId === pos.player?.id }" @click="handlePositionClick(pos)">
             <template v-if="pos.player">
               <div class="badge-frame">
                 <div class="badge-ring"></div>
@@ -473,6 +473,10 @@ const cursedFoxState = reactive({ playerId: null, killedBySeer: false })
 const gameResult = ref(null)
 const lastApiRequestTime = ref(0)
 const API_REQUEST_INTERVAL = 1200
+let aiRequestStartQueue = Promise.resolve()
+let lastAiFailureNoticeAt = 0
+const AI_MAX_ATTEMPTS = 2
+const AI_RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504])
 const aiConfigCache = new Map()
 const playerMemories = reactive({})
 const gameRules = Object.freeze({
@@ -685,12 +689,18 @@ const availableAiPlayers = computed(() => {
   const used = players.value.map(p => p.aiPlayerId).filter(id => id)
   return aiPlayers.value.filter(ai => !used.includes(ai.id))
 })
+const isRoleNotice = message => Boolean(
+  message && (
+    message.visibility === 'role'
+    || (message.type === 'referee' && /^(你的身份是|Your role is)/.test(String(message.content || '').trim()))
+  )
+)
 const filteredDialogMessages = computed(() => {
   const committedMessages = dialogMessages.value.filter(message => !message.hiddenDuringSpeech)
   const visibleMessages = showThinking.value
     ? committedMessages
     : committedMessages.filter(message => message.type !== 'thinking')
-  if (currentViewMode.value === 'god') return visibleMessages
+  if (currentViewMode.value === 'god') return visibleMessages.filter(message => !isRoleNotice(message))
   if (currentViewMode.value === 'spectator') return visibleMessages.filter(m => (m.visibility || 'public') === 'public')
   if (currentViewMode.value === 'player' && selectedPlayerId.value) {
     const sp = players.value.find(p => p.id === selectedPlayerId.value)
@@ -698,6 +708,7 @@ const filteredDialogMessages = computed(() => {
     return visibleMessages.filter(m => {
       const visibility = m.visibility || 'public'
       if (visibility === 'public') return true
+      if (visibility === 'role') return m.privateFor === sp.id
       if (visibility === 'private') return m.privateFor === sp.id
       if (visibility === 'wolves') return isPackWolf(sp)
       return visibility === 'god' ? false : m.sender === sp.playerName
@@ -728,6 +739,7 @@ const getRoleClass = (role) => {
   return 'god'
 }
 const getPlayerNameById = (pid) => { const p = players.value.find(x => x.id === pid); return p ? p.playerName : '' }
+const getViewerLabel = player => player?.isAlive ? player.playerName : `${player?.playerName || ''}（已出局）`
 const getPlayerAvatar = pid => players.value.find(player => player.id === pid)?.avatarUrl || ''
 const getSenderAvatar = name => players.value.find(player => player.playerName === name)?.avatarUrl || ''
 const getAvatarPlaceholder = name => String(name || 'AI').replace(/^\d+号\s*/, '').trim().slice(0, 4) || 'AI'
@@ -963,7 +975,7 @@ const restoreGameSnapshot = async () => {
   currentPhase.value = snapshot.currentPhase || 'night'
   gameStarted.value = Boolean(snapshot.gameStarted)
   dialogMessages.value = Array.isArray(snapshot.dialogMessages)
-    ? snapshot.dialogMessages.map(message => ({ ...message, hiddenDuringSpeech: false }))
+    ? snapshot.dialogMessages.map(message => ({ ...message, visibility: isRoleNotice(message) ? 'role' : (message.visibility || 'public'), hiddenDuringSpeech: false }))
     : []
   speechOrder.value = Array.isArray(snapshot.speechOrder) ? snapshot.speechOrder : []
   speechIndex.value = Number.isInteger(snapshot.speechIndex) ? snapshot.speechIndex : -1
@@ -1059,7 +1071,7 @@ const notifyPlayerRoles = () => {
     const content = currentLocale() === 'zh-CN'
       ? `你的身份是${getRoleName(p.role)}，胜利条件：${winCondition}。${teammates ? `狼队友：${teammates}。` : '除身份技能获得的信息外，其他玩家身份均未知。'}本局板子规则：${boardRules.value.special}`
       : `Your role is ${getRoleName(p.role)}. Win condition: ${isWolfRole(p) ? 'eliminate every villager or every good role' : 'eliminate every wolf-team player'}.${teammates ? ` Wolf teammates: ${teammates}.` : ' Other roles are unknown unless learned through your ability.'} Board rule: ${boardRules.value.special}`
-    addGameMessage({ sender: $t('gamePlay.referee'), content, type: 'referee', visibility: 'private', privateFor: p.id })
+    addGameMessage({ sender: $t('gamePlay.referee'), content, type: 'referee', visibility: 'role', privateFor: p.id })
   })
 }
 const exitGame = () => {
@@ -1079,6 +1091,10 @@ const exitGame = () => {
 const handlePositionClick = (pos) => {
   if (pos.locked) return
   if (pos.player) {
+    if (gameStarted.value) {
+      if (currentViewMode.value === 'player') selectedPlayerId.value = pos.player.id
+      return
+    }
     ElMessageBox.confirm($t('gamePlay.deleteConfirm', { name: pos.player.playerName }), $t('gamePlay.deletePlayerTitle'), { confirmButtonText: $t('common.confirm'), cancelButtonText: $t('common.cancel'), type: 'warning' })
       .then(async () => {
         try { await axios.post('/game/player/remove', { roomId, playerId: pos.player.id }); ElMessage.success($t('gamePlay.playerDeleted', { name: pos.player.playerName })); await loadGameData() } catch (e) { ElMessage.error($t('common.failed')) }
@@ -1549,42 +1565,77 @@ const normalizeApiUrl = (baseUrl) => {
   return url
 }
 
+const reserveAiRequestStart = async () => {
+  const reservation = aiRequestStartQueue
+    .catch(() => {})
+    .then(async () => {
+      const waitMs = Math.max(0, API_REQUEST_INTERVAL - (Date.now() - lastApiRequestTime.value))
+      if (waitMs > 0) await delay(waitMs)
+      lastApiRequestTime.value = Date.now()
+    })
+  aiRequestStartQueue = reservation.catch(() => {})
+  return reservation
+}
+
+const reportAiRequestFailure = error => {
+  const now = Date.now()
+  if (now - lastAiFailureNoticeAt < 10000) return
+  lastAiFailureNoticeAt = now
+  const status = error?.status ? `HTTP ${error.status}` : (error?.name === 'AbortError' ? '请求超时' : error?.message || '网络错误')
+  addRefereeMessage('模型服务暂时不可用，已重试并使用本地逻辑继续。', { visibility: 'god', detail: `${status}。503通常表示上游服务繁忙或临时不可用，并非游戏流程错误。` })
+}
+
 const callStructuredAi = async (config, systemPrompt, userPrompt) => {
   if (!config?.apiKey) return null
-  const sinceLastRequest = Date.now() - lastApiRequestTime.value
-  if (sinceLastRequest < API_REQUEST_INTERVAL) await delay(API_REQUEST_INTERVAL - sinceLastRequest)
-  lastApiRequestTime.value = Date.now()
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 45000)
-  try {
-    const temperature = typeof config.temperature === 'number'
-      ? (config.temperature > 2 ? config.temperature / 10 : config.temperature)
-      : 0.7
-    const body = {
-      model: config.modelName || 'deepseek-chat',
-      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-      temperature,
-      max_tokens: Math.min(2200, Math.max(900, Number(config.maxTokens) || 1000)),
-      response_format: { type: 'json_object' }
-    }
-    const response = await fetch(normalizeApiUrl(config.apiBaseUrl), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const data = await response.json()
-    const message = data.choices?.[0]?.message || data.output?.choices?.[0]?.message || {}
-    const parsed = parseStructuredResponse(message.content)
-    if (parsed && !parsed.thinking && message.reasoning_content) parsed.thinking = message.reasoning_content
-    return parsed
-  } catch (error) {
-    addRefereeMessage('模型请求失败，本次已使用本地逻辑继续。', { visibility: 'god', detail: error.name === 'AbortError' ? '请求超时' : error.message })
-    return null
-  } finally {
-    clearTimeout(timeout)
+  const temperature = typeof config.temperature === 'number'
+    ? (config.temperature > 2 ? config.temperature / 10 : config.temperature)
+    : 0.7
+  const body = {
+    model: config.modelName || 'deepseek-chat',
+    messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+    temperature,
+    max_tokens: Math.min(2200, Math.max(900, Number(config.maxTokens) || 1000)),
+    response_format: { type: 'json_object' }
   }
+  let lastError = null
+  for (let attempt = 1; attempt <= AI_MAX_ATTEMPTS; attempt++) {
+    await waitWhilePaused()
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 45000)
+    try {
+      await reserveAiRequestStart()
+      const response = await fetch(normalizeApiUrl(config.apiBaseUrl), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      })
+      if (!response.ok) {
+        const error = new Error(`HTTP ${response.status}`)
+        error.status = response.status
+        error.retryAfter = response.headers.get('retry-after') || ''
+        throw error
+      }
+      const data = await response.json()
+      const message = data.choices?.[0]?.message || data.output?.choices?.[0]?.message || {}
+      const parsed = parseStructuredResponse(message.content)
+      if (parsed && !parsed.thinking && message.reasoning_content) parsed.thinking = message.reasoning_content
+      return parsed
+    } catch (error) {
+      lastError = error
+      const retryable = AI_RETRYABLE_STATUSES.has(error?.status) || error?.name === 'AbortError' || error?.name === 'TypeError'
+      if (!retryable || attempt >= AI_MAX_ATTEMPTS) break
+      const retryAfter = Number(error?.retryAfter)
+      const backoff = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(8000, retryAfter * 1000)
+        : Math.min(8000, 1200 * (2 ** (attempt - 1)))
+      await delay(backoff + Math.floor(Math.random() * 300))
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+  reportAiRequestFailure(lastError)
+  return null
 }
 
 const roleVictoryCondition = (player, language) => {
@@ -3438,6 +3489,7 @@ onUnmounted(() => {
   position: relative;
 }
 .player-badge:hover { transform: scale(1.04); }
+.player-badge.viewing .badge-frame { border-color: var(--gold) !important; box-shadow: 0 0 0 2px rgba(224, 187, 91, .32), 0 0 22px rgba(224, 187, 91, .18); }
 .player-badge.speaking .badge-frame { border-color: var(--gold) !important; animation: glow 2s ease-in-out infinite; }
 .player-badge.dead .badge-frame { opacity: 0.5; filter: grayscale(0.6); }
 
