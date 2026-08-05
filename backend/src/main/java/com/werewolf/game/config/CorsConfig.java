@@ -5,10 +5,12 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
- * CORS跨域配置：只允许配置的白名单来源，禁止任意来源携带凭证。
+ * CORS跨域配置：允许本地开发常见来源（localhost/127.0.0.1 任意端口）及显式配置的来源。
  */
 @Configuration
 public class CorsConfig implements WebMvcConfigurer {
@@ -18,15 +20,19 @@ public class CorsConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        String[] origins = Arrays.stream(allowedOrigins.split(","))
+        List<String> patterns = new ArrayList<>();
+        Arrays.stream(allowedOrigins.split(","))
                 .map(String::trim)
                 .filter(origin -> !origin.isEmpty())
-                .toArray(String[]::new);
-        if (origins.length == 0) {
-            origins = new String[]{"http://localhost:5173", "http://127.0.0.1:5173"};
+                .forEach(patterns::add);
+        if (patterns.isEmpty()) {
+            patterns.add("http://localhost:5173");
+            patterns.add("http://127.0.0.1:5173");
         }
+        patterns.add("http://localhost:*");
+        patterns.add("http://127.0.0.1:*");
         registry.addMapping("/**")
-                .allowedOrigins(origins)
+                .allowedOriginPatterns(patterns.toArray(new String[0]))
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .exposedHeaders("Authorization")

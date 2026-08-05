@@ -42,7 +42,23 @@ const rules = {
 const login = async () => {
   if (!formRef.value) return
   await formRef.value.validate(async (v) => {
-    if (v) { loading.value = true; const ok = await userStore.login(form.username, form.password); loading.value = false; if (ok) { ElMessage.success($t('auth.loginSuccess')); router.push(route.query.redirect || '/') } else ElMessage.error($locale==='zh-CN'?'登录失败':'Login failed') }
+    if (!v) return
+    loading.value = true
+    const result = await userStore.login(form.username, form.password)
+    loading.value = false
+    if (result.ok) {
+      ElMessage.success($t('auth.loginSuccess'))
+      router.push(route.query.redirect || '/')
+      return
+    }
+    const errorKeys = {
+      INVALID_CREDENTIALS: 'invalidCredentials',
+      TOKEN_MISSING: 'tokenMissing',
+      NETWORK: 'serverUnreachable',
+      TIMEOUT: 'serverUnreachable'
+    }
+    const key = errorKeys[result.errorCode]
+    ElMessage.error(key ? $t(`auth.${key}`) : (result.message || $t('auth.loginFailed')))
   })
 }
 </script>

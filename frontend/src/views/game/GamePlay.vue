@@ -409,6 +409,7 @@ function createEmptyNightState() {
     cursedFoxSeerTargetId: null,
     wolvesBlocked: false,
     deaths: [],
+    wolfDiscussionSummary: '',
     explanation: ''
   }
 }
@@ -535,6 +536,15 @@ let finalizationPromise = null
 const SPEEDS = { slow: 80, normal: 50, fast: 30 }
 const SPEECH_LIMIT_SECONDS = 120
 const DECISION_WINDOW_SECONDS = 30
+const WOLF_DISCUSSION_SECONDS = 40
+const WOLF_DISCUSSION_GUIDE_ZH = `夜晚是狼队唯一能秘密沟通、制定战术的环节，重点商定三件事：
+1. 定目标（刀口）：优先击杀对狼队威胁最大的神职（如预言家）；可考虑击杀某玩家的下家争取归票权；可选空刀迷惑好人，或自刀骗取女巫解药获得银水身份。
+2. 定分工：悍跳狼（冲锋狼）主动跳预言家与真预言家对跳争夺警徽带队；倒钩狼白天伪装好人、必要时卖队友洗清嫌疑；隐狼/垫飞狼假装平民用伪逻辑制造混乱；补跳狼在前置悍跳失败时接力跳预言家。
+3. 定台词：统一白天口径，保证发言前后一致、互不矛盾。`
+const WOLF_DISCUSSION_GUIDE_EN = `Night is the only phase where the wolf team can secretly coordinate. Focus on three things:
+1. Kill target: prioritize the most threatening god (usually the Seer); consider killing the player before your wolf teammate to gain late speaking/vote-order advantage; optionally use a no-kill to mislead the good side, or self-kill to bait the witch's antidote and earn silver-water trust.
+2. Day personas: the counterclaim wolf actively runs against the Seer for the sheriff badge and lead; the bussing wolf acts good and sells teammates when useful; the chaos wolf pretends to be a villager and spreads pseudo-logic; the backup wolf takes over if the counterclaim fails.
+3. Unified story: align the day narrative so speeches stay consistent and never contradict each other.`
 const speeds = [{ key: 'slow', label: $locale === 'zh-CN' ? '慢' : 'S' }, { key: 'normal', label: $locale === 'zh-CN' ? '常' : 'N' }, { key: 'fast', label: $locale === 'zh-CN' ? '快' : 'F' }]
 const viewModes = [{ key: 'god', label: $t('gamePlay.godView') }, { key: 'player', label: $t('gamePlay.playerView') }, { key: 'spectator', label: $t('gamePlay.spectatorView') }]
 
@@ -725,6 +735,7 @@ const phaseLabel = computed(() => {
     night_gravedigger: zh ? '守墓人行动' : 'Gravedigger action',
     night_guard: zh ? '守卫行动' : 'Guard action',
     night_wolf: zh ? '狼人行动' : 'Wolf action',
+    night_wolf_discuss: zh ? '狼人限时讨论' : 'Wolf discussion',
     night_wolf_beauty: zh ? '狼美人行动' : 'Wolf Beauty action',
     night_witch: zh ? '女巫行动' : 'Witch action',
     night_seer: zh ? '预言家行动' : 'Seer action',
@@ -795,7 +806,7 @@ const canSpeak = computed(() => {
     if (selectedPlayerId.value) return speakingPlayer.value === selectedPlayerId.value
     return true
   }
-  if (currentPhase.value === 'night' && selectedPlayerId.value) {
+  if ((currentPhase.value === 'night' || currentPhase.value === 'night_wolf_discuss') && selectedPlayerId.value) {
     const sp = players.value.find(p => p.id === selectedPlayerId.value)
     return sp && isPackWolf(sp)
   }
@@ -1000,17 +1011,22 @@ const buildRecordPayload = (source, winner, finishedAt) => {
 const persistGameSnapshot = (stage = resumeStage.value) => {
   // 仅房主写入本地与服务端快照；成员视角以服务端投影为准，避免完整状态回写或泄漏
   if (!players.value.length || !gameStarted.value || !isRoomOwner.value) return
-  const snapshot = buildGameSnapshot(stage)
-  const serialized = JSON.stringify(snapshot)
-  localStorage.setItem(gameSnapshotStorageKey, serialized)
-  // 语音配置仅属于本机，不随快照上传服务端
-  const remotePayload = { ...snapshot }
-  delete remotePayload.playerVoiceConfigs
-  snapshotWriteQueue = snapshotWriteQueue
-    .catch(() => {})
-    .then(() => axios.put('/game/state', { roomId: Number(roomId), savedAt: snapshot.savedAt, stateJson: JSON.stringify(remotePayload) }))
-    .catch(() => {})
-  return snapshotWriteQueue
+  try {
+    const snapshot = buildGameSnapshot(stage)
+    const serialized = JSON.stringify(snapshot)
+    localStorage.setItem(gameSnapshotStorageKey, serialized)
+    // 语音配置仅属于本机，不随快照上传服务端
+    const remotePayload = { ...snapshot }
+    delete remotePayload.playerVoiceConfigs
+    snapshotWriteQueue = snapshotWriteQueue
+      .catch(() => {})
+      .then(() => axios.put('/game/state', { roomId: Number(roomId), savedAt: snapshot.savedAt, stateJson: JSON.stringify(remotePayload) }))
+      .catch(() => {})
+    return snapshotWriteQueue
+  } catch (error) {
+    console.warn('保存游戏快照失败：', error)
+    return snapshotWriteQueue
+  }
 }
 const readRemoteGameSnapshot = async () => {
   try {
@@ -1183,6 +1199,7 @@ const startGame = async () => {
   if (players.value.length < required) { ElMessage.warning($t('gamePlay.notEnoughPlayers', { count: required })); return }
   if (finalizationPromise) await finalizationPromise
   await loadGameData({ restore: false })
+  skipIntroRefereeSpeech()
   initializeGameState()
   await playRoleDealAnimation(distributeRoles)
   players.value.forEach(p => { if (p.aiPlayerId) p.userId = -1 })
@@ -1212,14 +1229,22 @@ const exitGame = () => {
     .then(() => {
       gameLoopVersion++
       phaseRunning.value = false
-      releaseLoopLease()
-      isGamePaused.value = false
-      releasePauseWaiters()
-      closeSpeech('exit')
-      stopSpeaking()
-      persistGameSnapshot(resumeStage.value)
+      try {
+        releaseLoopLease()
+        isGamePaused.value = false
+        releasePauseWaiters()
+        closeSpeech('exit')
+        stopSpeaking()
+      } catch (error) {
+        console.warn('退出游戏清理失败：', error)
+      }
+      try {
+        persistGameSnapshot(resumeStage.value)
+      } catch (error) {
+        console.warn('退出游戏时保存快照失败：', error)
+      }
       gameStarted.value = false
-      router.push(`/game/room/detail/${roomId}`)
+      router.push(`/game/room/detail/${roomId}`).catch(() => {})
     }).catch(() => {})
 }
 const handlePositionClick = (pos) => {
@@ -1350,7 +1375,7 @@ const sendMessage = () => {
   const cp = players.value.find(p => p.id === selectedPlayerId.value)
   const name = cp ? cp.playerName : ($locale==='zh-CN'?'我':'Me')
   let type = 'player'
-  if (currentPhase.value === 'night' && cp && isPackWolf(cp)) type = 'wolf'
+  if ((currentPhase.value === 'night' || currentPhase.value === 'night_wolf_discuss') && cp && isPackWolf(cp)) type = 'wolf'
   addGameMessage({ sender: name, content: inputMessage.value.trim(), type, visibility: type === 'wolf' ? 'wolves' : 'public' })
   inputMessage.value = ''; scrollToBottom()
 }
@@ -1379,6 +1404,10 @@ const addRefereeMessage = (content, options = {}) => {
   return Promise.resolve(false)
 }
 const waitForRefereeSpeech = () => refereeSpeechBarrier.catch(() => false)
+const skipIntroRefereeSpeech = () => {
+  stopSpeaking({ clearQueue: true })
+  refereeSpeechBarrier = Promise.resolve(false)
+}
 const addDialogMessage = (sender, content, type = 'player', options = {}) => addGameMessage({
   sender, content, type, visibility: options.visibility || 'public', privateFor: options.privateFor || null, detail: options.detail || '', hiddenDuringSpeech: Boolean(options.hiddenDuringSpeech)
 })
@@ -1892,25 +1921,50 @@ const roleVictoryCondition = (player, language) => {
   return isWolfRole(player) ? '所有平民出局或所有神职出局' : '找出并放逐全部狼人阵营角色'
 }
 
+const buildNightOperationSummary = (player, language) => {
+  const zh = language === 'zh-CN'
+  const lines = []
+  const num = id => zh ? `${getPlayerNumberById(id)}号` : `player ${getPlayerNumberById(id)}`
+  const wolfTarget = players.value.find(p => p.id === nightState.wolfTargetId)
+  if (hasRole(player, 'witch')) {
+    if (wolfTarget) lines.push(zh ? `你昨夜得知狼人刀口是${wolfTarget.playerNumber}号。` : `Last night you learned the wolf kill target was player ${wolfTarget.playerNumber}.`)
+    if (nightState.witchSaved) lines.push(zh ? `你昨夜对${num(wolfTarget?.id)}使用了解药。` : `Last night you used the antidote on ${num(wolfTarget?.id)}.`)
+    else if (witchInventory.antidote > 0) lines.push(zh ? '你尚未使用解药。' : 'You still have the antidote.')
+    if (nightState.witchPoisonTargetId) lines.push(zh ? `你昨夜对${num(nightState.witchPoisonTargetId)}使用了毒药。` : `Last night you used the poison on ${num(nightState.witchPoisonTargetId)}.`)
+  }
+  if (hasRole(player, 'guard')) {
+    lines.push(nightState.guardTargetId
+      ? (zh ? `你昨夜守护了${num(nightState.guardTargetId)}。` : `Last night you guarded ${num(nightState.guardTargetId)}.`)
+      : (zh ? '你昨夜空守。' : 'Last night you guarded nobody.'))
+  }
+  if (isPackWolf(player) && wolfTarget) {
+    lines.push(zh ? `你们狼队昨夜刀口是${wolfTarget.playerNumber}号。` : `Your wolf team's kill target last night was player ${wolfTarget.playerNumber}.`)
+  }
+  return lines.join(' ')
+}
+
 const buildPlayerKnowledge = (player, language) => {
   const memory = playerMemories[player.id] || { privateKnowledge: [], checks: [] }
   const wolves = isPackWolf(player)
     ? players.value.filter(p => p.id !== player.id && isPackWolf(p)).map(p => `${p.playerNumber}号${p.playerName}`)
     : []
+  const nightOps = buildNightOperationSummary(player, language)
   if (language === 'en-US') {
     return [
       `You are player ${player.playerNumber}, ${player.playerName}. Your private role is ${getRoleName(player.role)}.`,
       `Win condition: ${roleVictoryCondition(player, language)}`,
       wolves.length ? `Known wolf teammates: ${wolves.join(', ')}.` : 'You do not know any other player roles except results learned through your own ability.',
-      memory.privateKnowledge.length ? `Private knowledge: ${memory.privateKnowledge.join(' | ')}` : 'No additional private knowledge.'
-    ].join('\n')
+      memory.privateKnowledge.length ? `Private knowledge: ${memory.privateKnowledge.join(' | ')}` : 'No additional private knowledge.',
+      nightOps ? `Night operations you know: ${nightOps}` : ''
+    ].filter(Boolean).join('\n')
   }
   return [
     `你是${player.playerNumber}号玩家${player.playerName}，私密身份是${getRoleName(player.role)}。`,
     `胜利条件：${roleVictoryCondition(player, language)}。`,
     wolves.length ? `你已知的狼队友：${wolves.join('、')}。` : '除你通过技能获得的结果外，其他玩家身份一律未知。',
-    memory.privateKnowledge.length ? `你的私密信息：${memory.privateKnowledge.join('；')}` : '你目前没有额外私密信息。'
-  ].join('\n')
+    memory.privateKnowledge.length ? `你的私密信息：${memory.privateKnowledge.join('；')}` : '你目前没有额外私密信息。',
+    nightOps ? `你夜晚掌握的操作信息：${nightOps}` : ''
+  ].filter(Boolean).join('\n')
 }
 
 const buildDecisionPrompts = (player, action, extra, config) => {
@@ -1920,6 +1974,13 @@ const buildDecisionPrompts = (player, action, extra, config) => {
     ? ({ check: 'inspection', poison: 'poison', guard: 'protection' }[miracleMerchantState.skill] || miracleMerchantState.skill)
     : ({ check: '查验', poison: '毒药', guard: '守护' }[miracleMerchantState.skill] || miracleMerchantState.skill)
   const claimedRoles = Object.entries(publicRoleClaims).map(([id, role]) => `${getPlayerNumberById(Number(id))}号声明${role}`).join('；') || '暂无公开身份声明'
+  const claimedRoleValues = new Set(Object.values(publicRoleClaims))
+  const missingClaimRoles = ['通灵师', '预言家'].filter(role => boardRoleNames.value.has(role) && !claimedRoleValues.has(role))
+  const claimGapLine = missingClaimRoles.length
+    ? (language === 'en-US'
+        ? `Public claim gap: nobody has publicly claimed ${missingClaimRoles.join(' or ')} yet. Common analysis considers why this happened (the real role may be hiding or already dead, the wolves may have chosen not to counterclaim) and ties it to speeches and votes; whether and how much to expand on it is your tactical call.`
+        : `公开身份缺口：目前没有任何人跳${missingClaimRoles.join('或')}。常规分析会考虑为什么出现这个局面（真神职隐藏或已倒牌、狼队选择不悍跳等），并结合票型和发言给出判断；是否展开、展开多少由你自己的战术决定。`)
+    : ''
   const publicMiracleFacts = Object.values(publicMiracleClaims).map(claim => language === 'en-US'
     ? `Player ${claim.merchantNumber} publicly claimed Miracle Merchant${claim.luckyNumber ? ` and named player ${claim.luckyNumber} as recipient` : ''}${claim.skill ? ` of ${claim.skill}` : ''}${claim.claimedBacklash ? ', claiming transaction backlash' : ''}.`
     : `${claim.merchantNumber}号公开声明奇迹商人${claim.luckyNumber ? `，报${claim.luckyNumber}号为幸运儿` : ''}${claim.skill ? `，技能为${claim.skill}` : ''}${claim.claimedBacklash ? '，并声称交易反噬' : ''}。`).join(' ')
@@ -1951,8 +2012,8 @@ const buildDecisionPrompts = (player, action, extra, config) => {
           : `按常见打法，你通常会在遗言中说明自己是奇迹商人，并交代昨夜把${giftName || '技能'}给了${getPlayerNumberById(miracleMerchantState.luckyId)}号，但这只是会玩的惯例，不是强制输出。系统不会告诉你自己死于狼刀还是交易反噬，你只能根据公开现象提出两种可能并让幸运儿对账，不能宣称主持人确认了死因。`)
       : ''
     instruction = language === 'en-US'
-      ? `Task: You died ${isNightDeath ? 'during the night; the moderator did not publicly reveal the cause' : 'by public exile'} and this is your final statement. First write a concise private analysis, then give a 100-180 word in-character final statement. ${merchantLastWordsRule} Review only events that already happened and leave one concrete warning. You are out of the game: never say you will keep listening, vote later, update your opinion, speak next round, or take any future action. JSON schema: {"thinking":"private final analysis","speech":"public final statement"}`
-      : `任务：你${isNightDeath ? '在昨夜死亡，主持人只公开死讯、没有公开死因' : '已经被公投放逐'}，现在发表最后遗言。先写简洁的私密复盘，再写160-300个中文字符的公开遗言。${merchantLastWordsRule}只复盘已经发生的夜间结果、公开发言和票型，留下一个明确警示。你已经出局，严禁说“继续听发言”“之后再投”“准备投给”“下一轮发言”“再调整判断”等任何未来行动。JSON格式：{"thinking":"私密最终复盘","speech":"公开遗言"}`
+      ? `Task: You died ${isNightDeath ? 'during the night; the moderator only announced the death, not the cause' : 'by public exile'} and this is your final statement. First write a concise private analysis, then give a 100-180 word in-character final statement. Cross-reference your own role, private knowledge and night operations, previous public speeches, voting patterns, and public role claims; do not merely restate the death notice. If convention favors revealing your identity in last words (Seer reports checks, Witch reports the wolf target/silver water/poison, Guard reports protection, Medium/Gargoyle/Mechanical Wolf report learned roles), publicly claim and give that key information unless you have a clear tactical reason to hide. Reason about the death cause only from what you actually know: a Witch knows whether she used poison and must not treat poison as an unknown cause; only list multiple possible causes when a board skill you cannot exclude exists (e.g., Evil Knight reflection, Dreamer chain-dreaming, Miracle Merchant backlash). Land on a concrete contradiction or suspect, e.g., compare one player's earlier and later speeches with their voting record. ${merchantLastWordsRule} You are out of the game: never say you will keep listening, vote later, update your opinion, speak next round, or take any future action. JSON schema: {"thinking":"private final analysis","speech":"public final statement"}`
+      : `任务：你${isNightDeath ? '在昨夜死亡，主持人只公开死讯、没有公开死因' : '已经被公投放逐'}，现在发表最后遗言。先写简洁的私密复盘，再写160-300个中文字符的公开遗言。必须综合你自己的身份、私密信息与夜晚操作、此前公开发言、票型与公开身份声明交叉推理，不能只复述死讯。如果常规打法应明牌（预言家报验人、女巫报刀口/银水/毒口、守卫报守人、通灵师/石像鬼/机械狼报学到的身份），就公开身份并给出关键信息，除非你有明确战术理由隐藏。只能依据你确知的夜晚操作推理死因：女巫知道自己是否用毒，不能把“被毒”当作未知死因；只有存在你无法排除的板子技能（如恶灵骑士反伤、摄梦人连梦、奇迹商人反噬）时，才可以列出多种可能。遗言必须落到具体矛盾或怀疑对象，例如把某人的前后发言与其站边、票型放在一起核对。${merchantLastWordsRule}你已经出局，严禁说“继续听发言”“之后再投”“准备投给”“下一轮发言”“再调整判断”等任何未来行动。JSON格式：{"thinking":"私密最终复盘","speech":"公开遗言"}`
   } else if (action === 'speech' || action === 'pkSpeech' || action === 'sheriffSpeech' || action === 'sheriffPkSpeech') {
     const stageName = action === 'pkSpeech' ? '平票PK发言' : action === 'sheriffPkSpeech' ? '警徽PK发言' : action === 'sheriffSpeech' ? '警长竞选发言' : '正常白天发言'
     const specialSchema = (hasRole(player, 'whiteWolf') && action === 'speech') || (isPackWolf(player) && ['sheriffSpeech', 'sheriffPkSpeech'].includes(action))
@@ -1972,16 +2033,25 @@ const buildDecisionPrompts = (player, action, extra, config) => {
                   : '若已有死亡玩家公开跳奇迹商人，必须讨论狼刀与交易失败反噬两种可能，并核对其所报幸运儿、技能类型及幸运儿回报，不能无视这条信息，也不能在未对账前机械认定死因。')
               : ''))
     instruction = language === 'en-US'
-      ? `Task: give a ${stageName} speech. First write private strategic analysis, then a 120-220 word public in-character speech. Analyze actual night results, prior speeches or votes, name concrete suspects and a voting intention. ${miracleSpeechRule} End naturally and decide a short pause before passing. JSON schema: {"thinking":"private strategy","speech":"public speech","claimRole":"seer|merchant|other|none","pass_microphone":true,"pass_delay_seconds":0.8-4${specialSchema}}`
-      : `任务：${stageName}。先写简洁的私密局势分析，再写180-350个中文字符的公开发言。必须结合真实夜间结果、此前发言或票型，至少点出一名具体怀疑对象或矛盾并说明投票倾向。${miracleSpeechRule}发言自然收束，并自行决定结束后停顿多久过麦。JSON格式：{"thinking":"私密策略摘要","speech":"公开发言","claimRole":"seer或merchant或other或none","pass_microphone":true,"pass_delay_seconds":0.8到4${specialSchema}}`
+      ? `Task: give a ${stageName} speech. First write private strategic analysis, then a 120-220 word public in-character speech. Cross-reference your own role, private knowledge and night operations, actual night results, prior speeches, voting patterns, and public role claims; do not trust tone alone, and do not ignore last-minute position changes or follow-vote relationships. ${claimGapLine} Name concrete suspects and a voting intention. ${miracleSpeechRule} End naturally and decide a short pause before passing. JSON schema: {"thinking":"private strategy","speech":"public speech","claimRole":"seer|merchant|medium|other|none","pass_microphone":true,"pass_delay_seconds":0.8-4${specialSchema}}`
+      : `任务：${stageName}。先写简洁的私密局势分析，再写180-350个中文字符的公开发言。必须综合你自己的身份、私密信息与夜晚操作、真实夜间结果、此前发言、票型和公开身份声明交叉推理，至少点出一名具体怀疑对象或矛盾并说明投票倾向；不要凭语气认好，也不要忽略临时改口与跟票关系。${claimGapLine}${miracleSpeechRule}发言自然收束，并自行决定结束后停顿多久过麦。JSON格式：{"thinking":"私密策略摘要","speech":"公开发言","claimRole":"seer或merchant或medium或other或none","pass_microphone":true,"pass_delay_seconds":0.8到4${specialSchema}}`
   } else if (action === 'guard') {
     instruction = language === 'en-US'
       ? `Choose one target number to guard, or null to leave empty. You may guard yourself, but cannot guard the same target on consecutive nights. A simultaneous guard and antidote on the wolf target causes that player to die. Candidates: ${extra.candidates}. JSON: {"thinking":"private decision summary","target":number|null}`
       : `请选择一名守护目标，也可以空守。可自守，但不能连续两晚守同一人；狼刀目标若同时被守卫和女巫救，会因同守同救死亡。可选：${extra.candidates}。JSON：{"thinking":"私密决策摘要","target":玩家编号或null}`
   } else if (action === 'wolf') {
+    const discussionLine = extra.discussion
+      ? (language === 'en-US'
+          ? `Wolf-team discussion: ${extra.discussion}. Align with the agreed direction unless you have a strong private reason to diverge.`
+          : `狼队讨论内容：${extra.discussion}。除非你有强烈私密理由，否则应与讨论方向保持一致。`)
+      : ''
     instruction = language === 'en-US'
-      ? `Independently submit one kill target without seeing teammates' votes. Candidates: ${extra.candidates}. JSON: {"thinking":"private wolf strategy summary","target":number}`
-      : `请独立提交一个击杀目标，你看不到其他狼人的本轮投票。可按策略选择空刀（target为null）或允许规则内的狼王自刀。可选：${extra.candidates}。JSON：{"thinking":"私密狼队策略摘要","target":玩家编号或null}`
+      ? `Independently submit one kill target without seeing teammates' votes. ${discussionLine} Candidates: ${extra.candidates}. JSON: {"thinking":"private wolf strategy summary","target":number}`
+      : `请独立提交一个击杀目标，你看不到其他狼人的本轮投票。${discussionLine}可按策略选择空刀（target为null）或允许规则内的狼王自刀。可选：${extra.candidates}。JSON：{"thinking":"私密狼队策略摘要","target":玩家编号或null}`
+  } else if (action === 'wolfDiscuss') {
+    instruction = language === 'en-US'
+      ? `You are in the limited-time wolf-team discussion. Teammates: ${extra.teammates || 'none'}. Candidates for tonight: ${extra.candidates}.\nNight strategy guide:\n${WOLF_DISCUSSION_GUIDE_EN}\nSend one short in-character message to your wolf teammates proposing the kill target and the day persona/speech plan. JSON: {"thinking":"private analysis","message":"short in-character message to wolf teammates","target":number|null}`
+      : `你正在狼队限时讨论中。狼队友：${extra.teammates || '无'}。今晚候选目标：${extra.candidates}。\n夜间战术要点：\n${WOLF_DISCUSSION_GUIDE_ZH}\n请给狼队友发一条简短、符合身份的讨论消息，提出刀口建议和白天分工/口径建议。JSON：{"thinking":"私密分析","message":"发给狼队友的简短讨论消息","target":玩家编号或null}`
   } else if (action === 'witch') {
     instruction = language === 'en-US'
       ? `Wolf target is ${extra.wolfTarget}. Antidote remaining: ${extra.antidote}; poison remaining: ${extra.poison}. Decide whether to save and optionally poison one living player. You do not know the guard target. JSON: {"thinking":"private decision summary","useAntidote":boolean,"poisonTarget":number|null}`
@@ -1992,8 +2062,8 @@ const buildDecisionPrompts = (player, action, extra, config) => {
       : `请选择一名存活玩家查验。可选：${extra.candidates}。JSON：{"thinking":"私密决策摘要","target":玩家编号}`
   } else if (action === 'vote') {
     instruction = language === 'en-US'
-      ? `${extra.mustChoose ? 'This is a tie-break PK vote: you must choose one listed candidate and cannot abstain.' : 'This is a regular exile vote: you may abstain, but must explain why because abstention leaves a suspicious voting record.'} Candidates: ${extra.candidates}. JSON: {"thinking":"private vote reasoning","target":number|null,"abstain":boolean}`
-      : `${extra.mustChoose ? '本轮是平票后的PK重投，必须从PK台候选人中选择，不得弃票。' : '本轮是常规放逐投票，可以弃票（压手），但必须说明原因，因为弃票会留下需要解释的票型。'}候选：${extra.candidates}。JSON：{"thinking":"私密投票理由","target":玩家编号或null,"abstain":true或false}`
+      ? `${extra.mustChoose ? 'This is a tie-break PK vote: you must choose one listed candidate and cannot abstain.' : 'This is a regular exile vote: you may abstain, but must explain why because abstention leaves a suspicious voting record.'} Reason from your own role perspective, private night information, public speeches, and voting patterns. Candidates: ${extra.candidates}. JSON: {"thinking":"private vote reasoning","target":number|null,"abstain":boolean}`
+      : `${extra.mustChoose ? '本轮是平票后的PK重投，必须从PK台候选人中选择，不得弃票。' : '本轮是常规放逐投票，可以弃票（压手），但必须说明原因，因为弃票会留下需要解释的票型。'}必须结合自己的身份视角、私密信息、公开发言与票型推理后再决定。候选：${extra.candidates}。JSON：{"thinking":"私密投票理由","target":玩家编号或null,"abstain":true或false}`
   } else if (action === 'hunter') {
     instruction = language === 'en-US'
       ? `You died by ${extra.cause} and may fire once or deliberately hold your shot if evidence is insufficient. Candidates: ${extra.candidates}. JSON: {"thinking":"private shooting rationale","fire":boolean,"target":number|null}`
@@ -2013,9 +2083,15 @@ const buildDecisionPrompts = (player, action, extra, config) => {
   } else if (action === 'wolfBeauty') {
     instruction = `使用狼美人魅惑选择一名目标，不能连续两夜魅惑同一人。可选：${extra.candidates}。JSON：{"thinking":"私密技能策略","target":玩家编号}`
   } else if (action === 'sheriffCampaign') {
+    const isNightCheckGod = hasRole(player, 'medium') || hasRole(player, 'seer')
+    const wolfPlan = isPackWolf(player) && extra.wolfDiscussion
+      ? (language === 'en-US'
+          ? `Wolf-team night discussion (for reference only): ${extra.wolfDiscussion}. You may follow it or follow your own read; it is not binding.`
+          : `狼队夜晚讨论摘要（仅供参考）：${extra.wolfDiscussion}。你可以参考，也可以按自己的判断调整，不强制服从。`)
+      : ''
     instruction = language === 'en-US'
-      ? `Decide freely whether to run for sheriff and choose clockwise or counterclockwise speaking order if elected. Common strategy is for the real Seer to run, for Villagers to weigh the value and risk of running, and for wolves to coordinate claimants and below-line votes, but none of these are enforced restrictions. Any role may run, multiple wolves may run, and your choice must follow your own identity, personality, and plan. JSON: {"thinking":"private campaign plan","run":boolean,"direction":"clockwise|counterclockwise","tacticalReason":"reason or empty"}`
-      : `根据自己的身份、人设和策略自由决定是否上警，并选择当选后希望采用顺时针或逆时针发言。常见惯例是真预言家上警、平民谨慎评估上警收益、狼队协调悍跳与警下票，但这些都不是系统限制：任何身份都可以上警，狼队也可以多人上警。JSON：{"thinking":"私密竞选策略","run":true或false,"direction":"clockwise或counterclockwise","tacticalReason":"上警理由或空字符串"}`
+      ? `Decide whether to run for sheriff and choose clockwise or counterclockwise speaking order if elected. These are conventional strategic suggestions, not enforced rules. ${isNightCheckGod ? `As the real ${getRoleName(player.role)}, conventional play is to run and openly claim in the campaign speech to lead the vote, but you may also choose a hidden or alternative line if your tactics favor it.` : isPackWolf(player) ? 'As a wolf, common wolf-team tactics arrange one counterclaim wolf to run and claim a key god role (usually the Medium or Seer) while the rest vote below the line; hidden routes and alternative lines are equally valid.' : 'As a Villager, weigh the value and risk of running; running, staying below the line, or other lines are all viable.'} ${wolfPlan} Any role may run or stay below the line; the final choice must match your identity, personality, and plan. JSON: {"thinking":"private campaign plan","run":boolean,"direction":"clockwise|counterclockwise","tacticalReason":"reason or empty"}`
+      : `决定是否上警，并选择当选后希望采用的发言方向。这些只是常规打法建议，不是系统限制。${isNightCheckGod ? `作为真${getRoleName(player.role)}，常规打法是上警并在竞选发言中明牌带队，但如果你有隐蔽或另类战术，也可以选择不上警。` : isPackWolf(player) ? '作为狼人，常见战术是安排一名悍跳狼上警冒充通灵师或预言家争夺警徽，其余狼人留在警下投票；隐蔽路线等另类打法同样可行。' : '作为平民，可以谨慎评估上警收益，上警、警下投票或其他打法都可行。'}${wolfPlan}任何身份都可以按自己的判断选择上警或不上警，最终选择必须符合你的身份、人设和战术。JSON：{"thinking":"私密竞选策略","run":true或false,"direction":"clockwise或counterclockwise","tacticalReason":"上警理由或空字符串"}`
   } else if (action === 'sheriffWithdraw') {
     instruction = language === 'en-US'
       ? `After all campaign speeches, decide freely whether to withdraw. A real Seer commonly stays and a tactical claimant often withdraws, but these are strategic conventions rather than enforced rules. You may stay even without publicly claiming a power role. JSON: {"thinking":"private withdrawal reasoning","withdraw":boolean}`
@@ -2423,6 +2499,35 @@ const runGuardAction = async (version) => {
   await phaseDelay()
 }
 
+const runWolfDiscussion = async (version, packWolves, candidates) => {
+  if (!isLoopActive(version) || packWolves.length < 2 || !candidates.length) return ''
+  currentPhase.value = 'night_wolf_discuss'
+  addRefereeMessage('狼人请睁眼，开始限时讨论：商定刀口、白天分工与统一口径。', { visibility: 'god' })
+  const results = await runDecisionWindow(version, packWolves, 'wolfDiscuss', (wolf) => ({
+    candidates: candidates.map(player => `${player.playerNumber}号`).join('、'),
+    teammates: packWolves.filter(other => other.id !== wolf.id).map(other => `${other.playerNumber}号${other.playerName}`).join('、')
+  }), '狼队限时讨论', WOLF_DISCUSSION_SECONDS)
+  const summary = []
+  for (const wolf of packWolves) {
+    if (!isLoopActive(version)) break
+    const decision = results.get(wolf.id) || {}
+    recordPrivateThinking(wolf, decision.thinking, '狼队讨论')
+    const message = String(decision.message || '').trim()
+    if (message) {
+      addGameMessage({ sender: `${wolf.playerNumber}号${wolf.playerName}（狼）`, content: message, type: 'wolf', visibility: 'wolves' })
+      summary.push(`${wolf.playerNumber}号：${message}`)
+    }
+    if (decision.target !== null && decision.target !== undefined && decision.target !== '') {
+      const target = resolvePlayerTarget(decision.target, candidates)
+      if (target) summary.push(`刀口建议：${target.playerNumber}号`)
+    }
+  }
+  addRefereeMessage('狼队限时讨论结束。', { visibility: 'god' })
+  await phaseDelay()
+  nightState.wolfDiscussionSummary = summary.join('；')
+  return nightState.wolfDiscussionSummary
+}
+
 const runWolfActions = async (version) => {
   currentPhase.value = 'night_wolf'
   revealWolfBrotherKnowledge()
@@ -2431,7 +2536,6 @@ const runWolfActions = async (version) => {
     await phaseDelay()
     return
   }
-  addRefereeMessage('狼人请睁眼。每名狼人独立提交刀口，由上帝按多数票结算。', { visibility: 'god' })
   const packWolves = alivePlayers.value.filter(player => isPackWolf(player) || (wolfBrotherState.awakened && hasRole(player, 'wolfSister')))
   const gargoyle = alivePlayers.value.find(player => hasRole(player, 'gargoyle'))
   const wolves = packWolves.length ? packWolves : (gargoyle ? [gargoyle] : [])
@@ -2439,7 +2543,9 @@ const runWolfActions = async (version) => {
   if (!packWolves.length && gargoyle) {
     addRefereeMessage('其他狼人已全部出局，石像鬼本夜获得单独袭击能力。', { visibility: 'god' })
   }
-  const wolfDecisions = await runDecisionWindow(version, wolves, 'wolf', () => ({ candidates: candidates.map(p => `${p.playerNumber}号`).join('、') }), '狼人刀口决策')
+  const discussion = await runWolfDiscussion(version, packWolves, candidates)
+  addRefereeMessage(discussion ? '狼人开始独立提交刀口，由上帝按多数票结算。' : '狼人请睁眼。每名狼人独立提交刀口，由上帝按多数票结算。', { visibility: 'god' })
+  const wolfDecisions = await runDecisionWindow(version, wolves, 'wolf', (player) => ({ candidates: candidates.map(p => `${p.playerNumber}号`).join('、'), discussion }), '狼人刀口决策')
   for (const wolf of wolves) {
     if (!isLoopActive(version) || !candidates.length) break
     const decision = wolfDecisions.get(wolf.id) || {}
@@ -2909,6 +3015,7 @@ const removeDuplicateSentences = speech => {
 const registerPublicRoleClaim = (player, speech) => {
   const content = String(speech || '')
   if (/(我是|我这里是|我跳)(真)?预言家|I (?:am|claim) (?:the )?seer/i.test(content)) publicRoleClaims[player.id] = '预言家'
+  else if (/(我是|我这里是|我跳)(真)?通灵师|I (?:am|claim) (?:the )?medium/i.test(content)) publicRoleClaims[player.id] = '通灵师'
   else if (/(我是|我这里是|我跳)(真)?奇迹商人|我是老板|I (?:am|claim) (?:the )?(?:merchant|miracle merchant)/i.test(content)) {
     publicRoleClaims[player.id] = '奇迹商人'
     const targetMatch = content.match(/(?:交给了?|给了?|幸运儿(?:是|为)?)(\d+)号/)
@@ -3090,11 +3197,11 @@ const runSheriffElection = async version => {
   await addRefereeMessage('第一天天亮后进入警长竞选：先上警，再随机发言，随后退水，最后只由警下玩家投票。第一次警徽投票允许弃票，狼人杀中俗称“压手”；警上未退水者没有警徽投票权。')
   const campaignPlans = new Map()
   const candidates = []
-  const campaignDecisions = await runDecisionWindow(version, [...alivePlayers.value], 'sheriffCampaign', () => ({}), '上警决策')
+  const campaignDecisions = await runDecisionWindow(version, [...alivePlayers.value], 'sheriffCampaign', () => ({ wolfDiscussion: nightState.wolfDiscussionSummary }), '上警决策')
   for (const player of [...alivePlayers.value]) {
     const decision = campaignDecisions.get(player.id) || {}
     recordPrivateThinking(player, decision.thinking, '警长竞选')
-    const run = decision.run === undefined ? hasRole(player, 'seer') : Boolean(decision.run)
+    const run = Boolean(decision.run)
     if (run) {
       player.isSheriffCandidate = true
       candidates.push(player)

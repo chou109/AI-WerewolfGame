@@ -53,7 +53,25 @@ const rules = {
 const register = async () => {
   if (!formRef.value) return
   await formRef.value.validate(async (v) => {
-    if (v) { loading.value = true; const ok = await userStore.register({ username: form.username, password: form.password, nickname: form.nickname, email: form.email }); loading.value = false; if (ok) { ElMessage.success($t('auth.registerSuccess')); router.push('/login') } else ElMessage.error($locale==='zh-CN'?'注册失败，用户名已存在':'Registration failed') }
+    if (!v) return
+    loading.value = true
+    const result = await userStore.register({ username: form.username, password: form.password, nickname: form.nickname, email: form.email })
+    loading.value = false
+    if (result.ok) {
+      ElMessage.success($t('auth.registerSuccess'))
+      router.push('/login')
+      return
+    }
+    const errorKeys = {
+      USERNAME_EXISTS: 'usernameExists',
+      EMAIL_EXISTS: 'emailExists',
+      INVALID_PARAMS: 'registerFailed',
+      REGISTER_FAILED: 'registerFailed',
+      NETWORK: 'serverUnreachable',
+      TIMEOUT: 'serverUnreachable'
+    }
+    const key = errorKeys[result.errorCode]
+    ElMessage.error(key ? $t(`auth.${key}`) : (result.message || $t('auth.registerFailed')))
   })
 }
 </script>

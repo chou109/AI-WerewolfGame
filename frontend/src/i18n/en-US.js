@@ -112,10 +112,17 @@ export default {
     loginSuccess: 'Login successful',
     registerSuccess: 'Registration successful',
     usernameRequired: 'Please enter a username',
-    passwordRequired: 'Please enter a password',
-    passwordMinLength: 'Password must be at least 6 characters',
-    passwordsNotMatch: 'Passwords do not match'
-  },
+      passwordRequired: 'Please enter a password',
+      passwordMinLength: 'Password must be at least 6 characters',
+      passwordsNotMatch: 'Passwords do not match',
+      usernameExists: 'Username already exists',
+      emailExists: 'Email is already registered, please log in',
+      registerFailed: 'Registration failed, please try again',
+      serverUnreachable: 'Cannot reach server, please check the backend service',
+      loginFailed: 'Login failed, please try again',
+      invalidCredentials: 'Incorrect username or password',
+      tokenMissing: 'Login succeeded but no token was returned; please restart the backend service'
+    },
 
   // Room List
   roomList: {

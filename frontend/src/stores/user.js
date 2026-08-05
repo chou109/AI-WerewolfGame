@@ -16,27 +16,45 @@ export const useUserStore = defineStore('user', {
     async login(username, password) {
       try {
         const response = await axios.post('/user/login', { username, password })
-        if (response.data.code === 200) {
-          this.userInfo = response.data.data
-          this.token = response.data.token || ''
+        const data = response.data
+        if (data.code === 200) {
+          this.userInfo = data.data
+          this.token = data.token || ''
           this.isLoggedIn = !!this.token
           localStorage.setItem('token', this.token)
           localStorage.setItem('userInfo', JSON.stringify(this.userInfo))
-          return this.isLoggedIn
+          if (!this.token) {
+            return { ok: false, errorCode: 'TOKEN_MISSING', message: data.message || '' }
+          }
+          return { ok: true, errorCode: '', message: data.message || '' }
         }
-        return false
+        return { ok: false, errorCode: data.errorCode || 'INVALID_CREDENTIALS', message: data.message || '' }
       } catch (error) {
         console.error('Login error:', error)
-        return false
+        const data = error.response && error.response.data
+        return {
+          ok: false,
+          errorCode: data && data.errorCode ? data.errorCode : (error.code === 'ECONNABORTED' ? 'TIMEOUT' : 'NETWORK'),
+          message: (data && data.message) || ''
+        }
       }
     },
     async register(userData) {
       try {
         const response = await axios.post('/user/register', userData)
-        return response.data.code === 200
+        return {
+          ok: response.data.code === 200,
+          errorCode: response.data.errorCode || '',
+          message: response.data.message || ''
+        }
       } catch (error) {
         console.error('Register error:', error)
-        return false
+        const data = error.response && error.response.data
+        return {
+          ok: false,
+          errorCode: data && data.errorCode ? data.errorCode : (error.code === 'ECONNABORTED' ? 'TIMEOUT' : 'NETWORK'),
+          message: (data && data.message) || ''
+        }
       }
     },
     logout() {

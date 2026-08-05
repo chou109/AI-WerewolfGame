@@ -19,8 +19,10 @@ public interface UserService extends IService<User> {
 
     /**
      * 用户注册
+     *
+     * @return 0 成功，1 用户名已存在，2 邮箱已被注册，-1 其他失败
      */
-    boolean register(User user);
+    int register(User user);
 
     /**
      * 更新用户信息

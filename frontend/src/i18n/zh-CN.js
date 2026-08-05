@@ -112,10 +112,17 @@ export default {
     loginSuccess: '登录成功',
     registerSuccess: '注册成功',
     usernameRequired: '请输入用户名',
-    passwordRequired: '请输入密码',
-    passwordMinLength: '密码长度至少6位',
-    passwordsNotMatch: '两次输入的密码不一致'
-  },
+      passwordRequired: '请输入密码',
+      passwordMinLength: '密码长度至少6位',
+      passwordsNotMatch: '两次输入的密码不一致',
+      usernameExists: '用户名已存在',
+      emailExists: '邮箱已被注册，请直接登录',
+      registerFailed: '注册失败，请稍后重试',
+      serverUnreachable: '无法连接服务器，请确认后端服务已启动',
+      loginFailed: '登录失败，请稍后重试',
+      invalidCredentials: '用户名或密码错误',
+      tokenMissing: '登录成功但未返回令牌，请重启后端服务'
+    },
 
   // 房间列表
   roomList: {

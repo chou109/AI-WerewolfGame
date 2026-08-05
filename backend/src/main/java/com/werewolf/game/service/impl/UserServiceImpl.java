@@ -39,15 +39,18 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
-    public boolean register(User user) {
+    public int register(User user) {
         if (findByUsername(user.getUsername()) != null) {
-            return false;
+            return 1;
+        }
+        if (lambdaQuery().eq(User::getEmail, user.getEmail()).one() != null) {
+            return 2;
         }
         user.setPassword(DigestUtils.md5DigestAsHex(user.getPassword().getBytes(StandardCharsets.UTF_8)));
         user.setCreateTime(LocalDateTime.now());
         user.setUpdateTime(LocalDateTime.now());
         user.setStatus(1);
-        return save(user);
+        return save(user) ? 0 : -1;
     }
 
     @Override

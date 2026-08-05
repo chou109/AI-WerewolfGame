@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import com.werewolf.game.util.MapUtil;
+import org.springframework.dao.DataAccessException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -41,14 +42,25 @@ public class UserController {
     @PostMapping("/register")
     public Map<String, Object> register(@RequestBody User user) {
         if (user.getUsername() == null || user.getUsername().trim().isEmpty()
-                || user.getPassword() == null || user.getPassword().length() < 6) {
-            return MapUtil.of("code", 400, "message", "用户名不能为空，密码至少6位");
+                || user.getPassword() == null || user.getPassword().length() < 6
+                || user.getNickname() == null || user.getNickname().trim().isEmpty()
+                || user.getEmail() == null || user.getEmail().trim().isEmpty()) {
+            return MapUtil.of("code", 400, "errorCode", "INVALID_PARAMS", "message", "用户名/昵称/邮箱不能为空，密码至少6位");
         }
-        boolean result = userService.register(user);
-        if (result) {
-            return MapUtil.of("code", 200, "message", "注册成功");
-        } else {
-            return MapUtil.of("code", 400, "message", "用户名已存在");
+        try {
+            int result = userService.register(user);
+            switch (result) {
+                case 1:
+                    return MapUtil.of("code", 400, "errorCode", "USERNAME_EXISTS", "message", "用户名已存在");
+                case 2:
+                    return MapUtil.of("code", 400, "errorCode", "EMAIL_EXISTS", "message", "邮箱已被注册");
+                case 0:
+                    return MapUtil.of("code", 200, "message", "注册成功");
+                default:
+                    return MapUtil.of("code", 400, "errorCode", "REGISTER_FAILED", "message", "注册失败，请稍后重试");
+            }
+        } catch (DataAccessException e) {
+            return MapUtil.of("code", 400, "errorCode", "REGISTER_FAILED", "message", "注册失败，用户名或邮箱可能已被使用");
         }
     }
 
