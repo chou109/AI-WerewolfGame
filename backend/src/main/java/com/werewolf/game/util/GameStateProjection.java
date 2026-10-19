@@ -31,6 +31,19 @@ public final class GameStateProjection {
             "Mechanical Wolf", "Wolf Brother", "Wolf Sister", "Shapeshifter Wolf King"
     ));
 
+    private static final Set<String> MODEL_STATE_KEYS = new HashSet<>(Arrays.asList(
+            "version", "savedAt", "roomId", "resumeStage", "gameStarted", "players", "currentRound",
+            "currentDay", "currentPhase", "dialogMessages", "speechOrder", "speechIndex", "voteHistory",
+            "lastPublicNightReport", "sheriffDirection", "sheriffElectionDone", "sheriffBadgeLost",
+            "publicRoleClaims", "publicMiracleClaims", "lastExiledPlayerId", "firstNightLastWordsPlayerIds",
+            "firstDayLastWordsGiven", "dayInterrupted", "silencedPlayerId", "bonusDayPending", "bonusNightPending",
+            "witchInventory", "playerMemories", "idiotFlippedIds", "gameResult"
+    ));
+
+    private static final Set<String> MODEL_PLAYER_KEYS = new HashSet<>(Arrays.asList(
+            "id", "playerNumber", "playerName", "role", "isAlive", "isSheriff", "isSheriffCandidate"
+    ));
+
     private GameStateProjection() {
     }
 
@@ -67,6 +80,14 @@ public final class GameStateProjection {
             if (viewerId == null || !isWitchPlayer(players, viewerId)) {
                 root.remove("witchInventory");
             }
+            if (viewerId == null || !isRolePlayer(players, viewerId, "守卫", "Guard")) {
+                root.remove("lastGuardTargetId");
+            }
+            filterUsedSkillIds(root, players, "hunterSkillUsed", viewerId, "猎人", "Hunter");
+            filterUsedSkillIds(root, players, "wolfKingSkillUsed", viewerId, "狼王", "Wolf King");
+            filterUsedSkillIds(root, players, "knightSkillUsed", viewerId, "骑士", "Knight");
+            root.remove("bomberSuppressedIds");
+            root.remove("specialDeathProcessedIds");
             JsonNode messages = root.get("dialogMessages");
             if (messages != null && messages.isArray()) {
                 ArrayNode publicMessages = OBJECT_MAPPER.createArrayNode();
@@ -97,6 +118,54 @@ public final class GameStateProjection {
         } catch (Exception exception) {
             return null;
         }
+    }
+
+    /** 严格模型投影：默认丢弃快照中新出现的未知字段。 */
+    public static String projectForModel(String stateJson, Long viewerId) {
+        String projectedJson = project(stateJson, viewerId);
+        if (projectedJson == null) return null;
+        try {
+            ObjectNode root = (ObjectNode) OBJECT_MAPPER.readTree(projectedJson);
+            java.util.Iterator<String> fields = root.fieldNames();
+            java.util.List<String> remove = new java.util.ArrayList<>();
+            while (fields.hasNext()) {
+                String key = fields.next();
+                if (!MODEL_STATE_KEYS.contains(key)) remove.add(key);
+            }
+            for (String key : remove) root.remove(key);
+            JsonNode players = root.get("players");
+            if (players != null && players.isArray()) {
+                for (JsonNode node : players) {
+                    if (!(node instanceof ObjectNode)) continue;
+                    ObjectNode player = (ObjectNode) node;
+                    java.util.Iterator<String> playerFields = player.fieldNames();
+                    remove.clear();
+                    while (playerFields.hasNext()) {
+                        String key = playerFields.next();
+                        if (!MODEL_PLAYER_KEYS.contains(key)) remove.add(key);
+                    }
+                    for (String key : remove) player.remove(key);
+                }
+            }
+            return OBJECT_MAPPER.writeValueAsString(root);
+        } catch (Exception exception) {
+            return null;
+        }
+    }
+
+    private static void filterUsedSkillIds(ObjectNode root, JsonNode players, String key, Long viewerId, String... roles) {
+        if (viewerId == null || !isRolePlayer(players, viewerId, roles)) {
+            root.remove(key);
+            return;
+        }
+        JsonNode usedIds = root.get(key);
+        if (usedIds == null || !usedIds.isArray()) {
+            root.remove(key);
+            return;
+        }
+        ArrayNode ownUsage = OBJECT_MAPPER.createArrayNode();
+        for (JsonNode id : usedIds) if (id.asLong(-1) == viewerId) ownUsage.add(id);
+        root.set(key, ownUsage);
     }
 
     private static void filterPlayerMemories(ObjectNode root, Long viewerId) {

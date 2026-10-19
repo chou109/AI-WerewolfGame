@@ -122,4 +122,17 @@ class GameStateProjectionTest {
     void invalidJsonReturnsNull() {
         assertNull(GameStateProjection.project("not-json", null));
     }
+
+    @Test
+    void modelProjectionDropsRoomMetadataAndUnknownPlayerFields() throws Exception {
+        String snapshot = sampleSnapshot().replace("\"version\":3", "\"version\":3,\"roomInfo\":{\"password\":\"hidden\"},\"futureSecret\":\"hidden\"")
+                .replace("\"playerName\":\"A\"", "\"playerName\":\"A\",\"userId\":99,\"apiKey\":\"hidden\"");
+        JsonNode result = read(GameStateProjection.projectForModel(snapshot, 3L));
+
+        assertFalse(result.has("roomInfo"));
+        assertFalse(result.has("futureSecret"));
+        assertFalse(result.get("players").get(0).has("userId"));
+        assertFalse(result.get("players").get(0).has("apiKey"));
+        assertEquals("预言家", result.get("players").get(2).get("role").asText());
+    }
 }

@@ -1,6 +1,10 @@
 package com.werewolf.game.llm;
 
 import com.werewolf.game.mapper.AiPlayerMapper;
+import com.werewolf.game.entity.AiPlayer;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -99,6 +103,51 @@ class AiModelGatewayServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> service.completeTransient(5L, request));
         verify(restTemplate, never()).exchange(anyString(), any(), any(), eq(String.class));
+    }
+
+    @Test
+    void decisionRequestRejectsUnknownActionsAndUnsupportedContextFields() {
+        AiDecisionRequest request = new AiDecisionRequest();
+        request.setRoomId(1L);
+        request.setGamePlayerId(2L);
+        request.setAiPlayerId(3L);
+        request.setAction("delete_database");
+        assertThrows(IllegalArgumentException.class, () -> service.validateDecisionRequest(request));
+
+        request.setAction("vote");
+        request.setPublicContext(Collections.singletonMap("privateRole", "狼人"));
+        assertThrows(IllegalArgumentException.class, () -> service.validateDecisionRequest(request));
+    }
+
+    @Test
+    void decisionUsesServerProjectionAndRejectsDeadOrUnknownTargets() {
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), any(), any())).thenReturn(1);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), any(), any(), any())).thenReturn(1);
+        when(jdbcTemplate.queryForList(anyString(), (Object) any())).thenReturn(Collections.singletonList(Collections.singletonMap(
+                "state_json", "{\"version\":3,\"roomInfo\":{\"password\":\"secret\"},\"players\":["
+                        + "{\"id\":101,\"playerNumber\":1,\"playerName\":\"AI\",\"role\":\"预言家\",\"isAlive\":true,\"userId\":1,\"apiKey\":\"private\"},"
+                        + "{\"id\":102,\"playerNumber\":2,\"playerName\":\"Dead\",\"role\":\"狼人\",\"isAlive\":false}],"
+                        + "\"dialogMessages\":[{\"visibility\":\"public\",\"type\":\"speech\",\"content\":\"hello\"}],"
+                        + "\"nightState\":{\"wolfTargetId\":102},\"futureSecret\":\"hidden\"}")));
+        AiPlayer aiPlayer = new AiPlayer();
+        aiPlayer.setId(3L);
+        aiPlayer.setName("Test AI");
+        aiPlayer.setModelType("openai");
+        aiPlayer.setModelName("test-model");
+        aiPlayer.setApiKey("test-key");
+        aiPlayer.setApiBaseUrl("https://api.openai.com/v1");
+        aiPlayer.setStatus(1);
+        when(aiPlayerMapper.selectById(3L)).thenReturn(aiPlayer);
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.POST), any(HttpEntity.class), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"choices\":[{\"message\":{\"content\":\"{\\\"thinking\\\":\\\"reason\\\",\\\"target\\\":2}\"}}]}"));
+
+        AiDecisionRequest request = new AiDecisionRequest();
+        request.setRoomId(1L);
+        request.setGamePlayerId(101L);
+        request.setAiPlayerId(3L);
+        request.setAction("vote");
+
+        assertThrows(IllegalStateException.class, () -> service.completeDecision(5L, request));
     }
 
     @Test

@@ -2051,17 +2051,33 @@ const buildDecisionPrompts = (player, action, extra, config) => {
   return { language, systemPrompt, userPrompt: `${base}\n${instruction}` }
 }
 
+const sanitizeDecisionContext = extra => {
+  const allowed = ['candidates', 'speakerNumber', 'speech', 'cause', 'discussion', 'wolfDiscussion', 'mustChoose']
+  return Object.fromEntries(allowed
+    .filter(key => extra?.[key] !== undefined && extra?.[key] !== null)
+    .map(key => [key, String(extra[key]).slice(0, 3000)]))
+}
+
 const requestPlayerDecision = async (player, action, extra = {}) => {
   await waitForRefereeSpeech()
   await waitWhilePaused()
   const config = await getAiConfig(player)
   await waitWhilePaused()
-  const prompts = buildDecisionPrompts(player, action, extra, config)
   aiThinkingPlayers.value = [...new Set([...aiThinkingPlayers.value, player.id])]
   try {
-    const result = await callStructuredAi(config, prompts.systemPrompt, prompts.userPrompt, player)
+    const response = config?.hasApiKey && config?.id
+      ? await axios.post('/ai/model/decision', {
+          roomId: Number(roomId),
+          gamePlayerId: Number(player.id),
+          aiPlayerId: Number(config.id),
+          action,
+          publicContext: sanitizeDecisionContext(extra)
+        }, { timeout: 45000 })
+      : null
+    const content = response?.data?.code === 200 ? response.data?.data?.content : null
+    const result = parseStructuredResponse(content)
     await waitWhilePaused()
-    return { ...(result || {}), language: prompts.language, usedLocalFallback: !result }
+    return { ...(result || {}), language: config?.language || currentLocale(), usedLocalFallback: !result }
   } finally {
     aiThinkingPlayers.value = aiThinkingPlayers.value.filter(id => id !== player.id)
   }

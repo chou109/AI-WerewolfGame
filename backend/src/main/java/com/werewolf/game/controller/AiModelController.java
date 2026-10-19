@@ -1,6 +1,7 @@
 package com.werewolf.game.controller;
 
 import com.werewolf.game.llm.AiModelChatRequest;
+import com.werewolf.game.llm.AiDecisionRequest;
 import com.werewolf.game.llm.AiModelTransientRequest;
 import com.werewolf.game.llm.AiModelGatewayService;
 import com.werewolf.game.util.MapUtil;
@@ -24,6 +25,23 @@ public class AiModelController {
         Long userId = parseUserId(httpRequest.getAttribute("userId"));
         try {
             String content = gatewayService.complete(userId, request);
+            return MapUtil.of("code", 200, "data", MapUtil.of("content", content));
+        } catch (SecurityException exception) {
+            return MapUtil.of("code", 403, "message", exception.getMessage());
+        } catch (AiModelGatewayService.RateLimitException exception) {
+            return MapUtil.of("code", 429, "message", exception.getMessage());
+        } catch (IllegalArgumentException exception) {
+            return MapUtil.of("code", 400, "message", exception.getMessage());
+        } catch (IllegalStateException exception) {
+            return MapUtil.of("code", 502, "message", exception.getMessage());
+        }
+    }
+
+    @PostMapping("/decision")
+    public Map<String, Object> decision(@RequestBody AiDecisionRequest request, HttpServletRequest httpRequest) {
+        Long userId = parseUserId(httpRequest.getAttribute("userId"));
+        try {
+            String content = gatewayService.completeDecision(userId, request);
             return MapUtil.of("code", 200, "data", MapUtil.of("content", content));
         } catch (SecurityException exception) {
             return MapUtil.of("code", 403, "message", exception.getMessage());

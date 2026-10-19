@@ -1,7 +1,7 @@
 // 板子规则唯一数据源：board_configs.json
 // 注意：frontend/src/game/board_configs.json 与 backend/src/main/resources/configs/board_configs.json 必须保持同步。
 // 修改任何板子配置时，请同步更新两份文件（或从后端 /game/board/configs 导出覆盖）。
-import boardConfigs from './board_configs.json'
+import boardConfigs from './board_configs.json' with { type: 'json' }
 
 export const BOARD_CONFIG_SCHEMA_VERSION = boardConfigs.schemaVersion || 1
 
