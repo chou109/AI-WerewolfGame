@@ -22,9 +22,11 @@
         </div>
       </template>
       <el-form :model="globalDefaults" class="defaults-form" label-position="top">
-        <el-form-item :label="$t('aiPlayer.apiKey')">
-          <el-input v-model="globalDefaults.apiKey" type="password" :placeholder="$t('aiPlayer.apiKeyPlaceholder')" show-password />
-        </el-form-item>
+        <el-alert :title="$locale === 'zh-CN' ? '密钥请在单个 AI 玩家配置中填写；此处不保存密钥。' : 'Enter keys per AI player; this default form never stores keys.'" type="info" :closable="false" />
+        <el-alert v-if="legacyBrowserKeysPresent" type="warning" :closable="false" class="legacy-key-warning">
+          <template #title>{{ $locale === 'zh-CN' ? '检测到旧版浏览器密钥。新调用不会读取这些密钥；请为未配置服务端密钥的 AI 玩家重新录入并保存。' : 'Legacy browser keys were found. New calls do not use them; re-enter and save keys for players without a server-side key.' }}</template>
+          <el-button link type="danger" @click="clearLegacyBrowserKeys">{{ $locale === 'zh-CN' ? '清除所有旧浏览器密钥' : 'Clear all legacy browser keys' }}</el-button>
+        </el-alert>
         <el-form-item :label="$t('aiPlayer.apiBaseUrl')">
           <el-input v-model="globalDefaults.apiBaseUrl" :placeholder="$t('aiPlayer.apiBaseUrlPlaceholder')" />
         </el-form-item>
@@ -125,7 +127,7 @@
         </el-form-item>
 
         <el-form-item :label="$t('aiPlayer.apiKey')" prop="apiKey">
-          <el-input v-model="aiPlayerForm.apiKey" type="password" :placeholder="aiPlayerForm.id ? $t('aiPlayer.apiKeyEditPlaceholder') : $t('aiPlayer.apiKeyPlaceholder')" show-password />
+          <el-input v-model="aiPlayerForm.apiKey" type="password" maxlength="512" autocomplete="new-password" :placeholder="aiPlayerForm.id ? $t('aiPlayer.apiKeyEditPlaceholder') : $t('aiPlayer.apiKeyPlaceholder')" show-password />
           <span v-if="aiPlayerForm.id && aiPlayerForm.maskedApiKey" class="field-hint">{{ $t('aiPlayer.currentKeyHint', { key: aiPlayerForm.maskedApiKey }) }}</span>
         </el-form-item>
 
@@ -279,9 +281,8 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, computed, watch, getCurrentInstance } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
-import { getAiPlayerKey, setAiPlayerKey, removeAiPlayerKey, getGlobalApiKey } from '../utils/apiKeys'
 import { speakText, stopSpeaking } from '../composables/useSpeechSynthesis.js'
 
 const { proxy } = getCurrentInstance()
@@ -301,6 +302,7 @@ const fetchingModels = ref(false)
 const testingConnection = ref(false)
 const connectionStatus = ref('') // '', 'success', 'failed'
 const testingAllConnections = ref(false)
+const legacyBrowserKeysPresent = ref(false)
 const connectionResults = reactive({})
 const selectedPreset = ref('')
 const voiceDialogVisible = ref(false)
@@ -465,7 +467,6 @@ const handleAvatarUpload = async event => {
 
 // Global defaults
 const globalDefaults = reactive({
-  apiKey: localStorage.getItem('globalApiKey') || '',
   apiBaseUrl: localStorage.getItem('globalApiBaseUrl') || ''
 })
 
@@ -565,6 +566,7 @@ const aiPlayerRules = {
 }
 
 onMounted(() => {
+  refreshLegacyBrowserKeyState()
   fetchAiPlayers()
   loadBrowserVoices()
   window.speechSynthesis?.addEventListener('voiceschanged', loadBrowserVoices)
@@ -579,6 +581,7 @@ const fetchAiPlayers = async () => {
     const response = await axios.get('/ai/player/available')
     if (response.data.code === 200) {
       aiPlayers.value = response.data.data
+      cleanupMigratedBrowserKeys(aiPlayers.value)
     }
   } catch (error) {
     console.error('Fetch AI players error:', error)
@@ -602,7 +605,6 @@ const applyPreset = (presetKey) => {
 }
 
 const saveGlobalDefaults = () => {
-  localStorage.setItem('globalApiKey', globalDefaults.apiKey)
   localStorage.setItem('globalApiBaseUrl', globalDefaults.apiBaseUrl)
   ElMessage.success($t('aiPlayer.saveGlobalDefaults'))
 }
@@ -624,7 +626,7 @@ const editAiPlayer = (aiPlayer) => {
 const resetForm = () => {
   Object.assign(aiPlayerForm, {
     id: null, name: '', modelType: '', modelName: '',
-    apiKey: globalDefaults.apiKey || '', apiBaseUrl: globalDefaults.apiBaseUrl || '',
+    apiKey: '', apiBaseUrl: globalDefaults.apiBaseUrl || '',
     personality: '', strategy: '', language: 'zh-CN', avatarUrl: '', temperature: 0.7, maxTokens: 1000, status: 1
   })
   modelList.value = []
@@ -639,18 +641,43 @@ watch(() => aiPlayerForm.modelType, (newType) => {
   else if (newType === 'anthropic' || newType === 'claude') aiPlayerForm.apiBaseUrl = 'https://api.anthropic.com/v1'
 })
 
-const requestProviderModels = async config => {
-  let apiUrl = String(config.apiBaseUrl || '').trim()
-  if (!apiUrl.startsWith('http')) apiUrl = 'https://' + apiUrl
-  if (!apiUrl.endsWith('/')) apiUrl += '/'
-  return axios.get(`${apiUrl}models`, {
-    headers: { Authorization: `Bearer ${String(config.apiKey || '').replace(/`/g, '').trim()}` },
-    timeout: 10000
+const requestProviderModels = async config => axios.post('/ai/model/models', {
+  apiBaseUrl: String(config.apiBaseUrl || '').trim(),
+  modelType: config.modelType,
+  apiKey: String(config.apiKey || '').replace(/`/g, '').trim()
+}, { timeout: 15000 })
+
+const refreshLegacyBrowserKeyState = () => {
+  legacyBrowserKeysPresent.value = Boolean(localStorage.getItem('globalApiKey')) || Object.keys(localStorage).some(key => key.startsWith('aiKey_'))
+}
+
+const cleanupMigratedBrowserKeys = players => {
+  players.forEach(player => {
+    if (player.hasApiKey) localStorage.removeItem(`aiKey_${player.id}`)
   })
+  if (players.length > 0 && players.every(player => player.hasApiKey)) localStorage.removeItem('globalApiKey')
+  refreshLegacyBrowserKeyState()
+}
+
+const clearLegacyBrowserKeys = async () => {
+  try {
+    await ElMessageBox.confirm(
+      $locale === 'zh-CN' ? '这会删除此浏览器中残留的旧版密钥。若某个密钥尚未保存到服务端，删除后需要重新输入。' : 'This deletes legacy keys in this browser. Any key not saved on the server must be re-entered.',
+      $locale === 'zh-CN' ? '确认清除旧密钥' : 'Clear legacy keys',
+      { type: 'warning', confirmButtonText: $locale === 'zh-CN' ? '清除' : 'Clear', cancelButtonText: $locale === 'zh-CN' ? '取消' : 'Cancel' }
+    )
+    for (const key of Object.keys(localStorage)) {
+      if (key === 'globalApiKey' || key.startsWith('aiKey_')) localStorage.removeItem(key)
+    }
+    refreshLegacyBrowserKeyState()
+    ElMessage.success($locale === 'zh-CN' ? '旧版浏览器密钥已清除' : 'Legacy browser keys cleared')
+  } catch {
+    // 用户取消。
+  }
 }
 
 const testConnection = async () => {
-  const apiKey = String(aiPlayerForm.apiKey || getAiPlayerKey(aiPlayerForm.id) || getGlobalApiKey()).replace(/`/g, '').trim()
+  const apiKey = String(aiPlayerForm.apiKey || '').replace(/`/g, '').trim()
   if (!apiKey) {
     ElMessage.warning($t('aiPlayer.needApiKey'))
     return
@@ -664,9 +691,9 @@ const testConnection = async () => {
   connectionStatus.value = ''
 
   try {
-    const response = await requestProviderModels({ apiBaseUrl: aiPlayerForm.apiBaseUrl, apiKey })
+    const response = await requestProviderModels({ apiBaseUrl: aiPlayerForm.apiBaseUrl, modelType: aiPlayerForm.modelType, apiKey })
 
-    if (response.data) {
+    if (response.data?.code === 200) {
       connectionStatus.value = 'success'
       ElMessage.success($t('aiPlayer.testSuccess'))
     } else {
@@ -675,7 +702,7 @@ const testConnection = async () => {
     }
   } catch (error) {
     connectionStatus.value = 'failed'
-    ElMessage.error($t('aiPlayer.testFailed') + ': ' + (error.message || ''))
+    ElMessage.error($t('aiPlayer.testFailed') + ': ' + (error.response?.data?.message || error.message || ''))
   } finally {
     testingConnection.value = false
   }
@@ -683,30 +710,47 @@ const testConnection = async () => {
 
 const testAllConnections = async () => {
   if (!aiPlayers.value.length || testingAllConnections.value) return
+  let temporaryKey
+  try {
+    const result = await ElMessageBox.prompt(
+      $locale === 'zh-CN' ? '输入一次性测试密钥。密钥只随本次请求发送到本项目后端，不写入浏览器存储。' : 'Enter a one-time key. It is sent to this app backend for this request only and is not saved in browser storage.',
+      $locale === 'zh-CN' ? '批量连接测试' : 'Test connections',
+      { inputType: 'password', confirmButtonText: $locale === 'zh-CN' ? '开始测试' : 'Test', cancelButtonText: $locale === 'zh-CN' ? '取消' : 'Cancel' }
+    )
+    temporaryKey = String(result.value || '').replace(/`/g, '').trim()
+  } catch {
+    return
+  }
+  if (!temporaryKey) return
   testingAllConnections.value = true
   aiPlayers.value.forEach(player => { connectionResults[player.id] = 'testing' })
-  const results = await Promise.all(aiPlayers.value.map(async player => {
-    const apiKey = getAiPlayerKey(player.id) || getGlobalApiKey()
-    if (!apiKey || !player.apiBaseUrl) {
-      connectionResults[player.id] = 'failed'
-      return false
-    }
-    try {
-      const response = await requestProviderModels({ apiBaseUrl: player.apiBaseUrl, apiKey })
-      const success = Boolean(response.data)
-      connectionResults[player.id] = success ? 'success' : 'failed'
-      return success
-    } catch {
-      connectionResults[player.id] = 'failed'
-      return false
-    }
-  }))
+  const results = []
+  for (let index = 0; index < aiPlayers.value.length; index += 3) {
+    const batch = aiPlayers.value.slice(index, index + 3)
+    const batchResults = await Promise.all(batch.map(async player => {
+      if (!player.apiBaseUrl) {
+        connectionResults[player.id] = 'failed'
+        return false
+      }
+      try {
+        const response = await requestProviderModels({ apiBaseUrl: player.apiBaseUrl, modelType: player.modelType, apiKey: temporaryKey })
+        const success = response.data?.code === 200 && Array.isArray(response.data?.data)
+        connectionResults[player.id] = success ? 'success' : 'failed'
+        return success
+      } catch {
+        connectionResults[player.id] = 'failed'
+        return false
+      }
+    }))
+    results.push(...batchResults)
+  }
+  temporaryKey = ''
   const successCount = results.filter(Boolean).length
   const failedCount = results.length - successCount
   testingAllConnections.value = false
   const summary = $locale === 'zh-CN'
-    ? `全部测试完成：${successCount} 个正常，${failedCount} 个失败`
-    : `Connection test complete: ${successCount} online, ${failedCount} failed`
+    ? `全部测试完成：${successCount} 个正常，${failedCount} 个失败（批量测试对所有配置使用同一临时密钥）`
+    : `Connection test complete: ${successCount} online, ${failedCount} failed (one temporary key was used for every profile)`
   if (failedCount) ElMessage.warning(summary)
   else ElMessage.success(summary)
 }
@@ -718,13 +762,8 @@ const saveAiPlayer = async () => {
       loading.value = true
       try {
         let formData = { ...aiPlayerForm }
-        let savedApiKey = ''
-        if (formData.apiKey) {
-          formData.apiKey = formData.apiKey.replace(/`/g, '').trim()
-          savedApiKey = formData.apiKey
-        } else if (aiPlayerForm.id) {
-          delete formData.apiKey
-        }
+        if (formData.apiKey) formData.apiKey = formData.apiKey.replace(/`/g, '').trim()
+        else if (aiPlayerForm.id) delete formData.apiKey
         if (formData.apiBaseUrl) formData.apiBaseUrl = formData.apiBaseUrl.replace(/`/g, '').trim()
 
         let response
@@ -734,7 +773,9 @@ const saveAiPlayer = async () => {
           response = await axios.post('/ai/player/create', formData)
         }
         if (response.data.code === 200) {
-          if (savedApiKey) setAiPlayerKey(aiPlayerForm.id || response.data.data?.id, savedApiKey)
+          const savedId = aiPlayerForm.id || response.data.data?.id
+          if (formData.apiKey && savedId) localStorage.removeItem(`aiKey_${savedId}`)
+          aiPlayerForm.apiKey = ''
           ElMessage.success(aiPlayerForm.id ? $t('aiPlayer.updateSuccess') : $t('aiPlayer.createSuccess'))
           dialogVisible.value = false
           fetchAiPlayers()
@@ -755,7 +796,7 @@ const deleteAiPlayer = async (id) => {
   try {
     const response = await axios.delete(`/ai/player/delete/${id}`)
     if (response.data.code === 200) {
-      removeAiPlayerKey(id)
+      localStorage.removeItem(`aiKey_${id}`)
       ElMessage.success($t('aiPlayer.deleteSuccess'))
       fetchAiPlayers()
     } else {
@@ -768,22 +809,16 @@ const deleteAiPlayer = async (id) => {
 }
 
 const fetchModelList = async () => {
-  const apiKey = String(aiPlayerForm.apiKey || getAiPlayerKey(aiPlayerForm.id) || getGlobalApiKey()).replace(/`/g, '').trim()
+  const apiKey = String(aiPlayerForm.apiKey || '').replace(/`/g, '').trim()
   if (!apiKey) { ElMessage.warning($t('aiPlayer.needApiKey')); return }
   if (!aiPlayerForm.apiBaseUrl) { ElMessage.warning($t('aiPlayer.needApiUrl')); return }
   if (fetchingModels.value) { ElMessage.warning($t('aiPlayer.fetchingModels')); return }
 
   fetchingModels.value = true
   try {
-    let apiUrl = aiPlayerForm.apiBaseUrl.trim()
-    if (!apiUrl.startsWith('http')) apiUrl = 'https://' + apiUrl
-    if (!apiUrl.endsWith('/')) apiUrl += '/'
+    const response = await requestProviderModels({ apiBaseUrl: aiPlayerForm.apiBaseUrl, modelType: aiPlayerForm.modelType, apiKey })
 
-    const response = await axios.get(`${apiUrl}models`, {
-      headers: { 'Authorization': `Bearer ${apiKey}` }
-    })
-
-    if (response.data && Array.isArray(response.data.data)) {
+    if (response.data?.code === 200 && Array.isArray(response.data.data)) {
       modelList.value = response.data.data
       const types = new Set()
       modelList.value.forEach(model => {
@@ -804,7 +839,7 @@ const fetchModelList = async () => {
     }
   } catch (error) {
     console.error('Fetch models error:', error)
-    ElMessage.error($t('aiPlayer.fetchFailed') + ': ' + (error.message || ''))
+    ElMessage.error($t('aiPlayer.fetchFailed') + ': ' + (error.response?.data?.message || error.message || ''))
   } finally {
     fetchingModels.value = false
   }

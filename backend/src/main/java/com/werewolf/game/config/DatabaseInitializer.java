@@ -1,6 +1,7 @@
 package com.werewolf.game.config;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,6 +21,9 @@ public class DatabaseInitializer {
 
     @Autowired
     private DataSource dataSource;
+
+    @Value("${app.database.seed-demo-data:false}")
+    private boolean seedDemoData;
 
     @Bean
     public ApplicationRunner initDatabase() {
@@ -50,6 +54,14 @@ public class DatabaseInitializer {
                                 ensureColumn(connection, "game_state_snapshot", "saved_at", "BIGINT NOT NULL DEFAULT 0");
                                 ensureColumn(connection, "game_room", "password", "VARCHAR(100) DEFAULT NULL");
                 ensureColumn(connection, "game_room", "board_version", "VARCHAR(20) DEFAULT '1'");
+
+                if (seedDemoData) {
+                    ClassPathResource seedScript = new ClassPathResource("sql/seed_demo_data.sql");
+                    if (seedScript.exists()) {
+                        ScriptUtils.executeSqlScript(connection, seedScript);
+                        System.out.println("本地演示数据初始化成功");
+                    }
+                }
             } catch (Exception e) {
                 System.err.println("数据库初始化失败: " + e.getMessage());
                 e.printStackTrace();

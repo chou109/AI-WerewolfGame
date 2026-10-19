@@ -363,7 +363,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import { useTypewriter } from '../../composables/useTypewriter.js'
 import { getVoiceLanguageKey, getVoiceLanguageLabel, groupVoicesByLanguage, speakText, stopSpeaking, pauseSpeaking, resumeSpeaking } from '../../composables/useSpeechSynthesis.js'
-import { getAiPlayerKey, getGlobalApiKey } from '../../utils/apiKeys.js'
 import { useUserStore } from '../../stores/user'
 import { BOARD_RULES, PACK_WOLF_ROLES, WEREWOLF_KNOWLEDGE, WOLF_TEAM_ROLES, getBoardRules, getRoleSummary, isPackWolfRole, isWolfTeamRole } from '../../game/rules.js'
 
@@ -1030,12 +1029,8 @@ const persistGameSnapshot = (stage = resumeStage.value) => {
 }
 const readRemoteGameSnapshot = async () => {
   try {
-    const params = {}
-    if (!isRoomOwner.value) {
-      const viewer = players.value.find(player => Number(player.userId) === Number(userStore.userInfo?.id))
-      if (viewer) params.viewerId = viewer.id
-    }
-    const response = await axios.get(`/game/state/${roomId}`, { params })
+    // 服务端根据登录用户与房间座位关系决定脱敏视角，客户端不再自行指定 viewerId。
+    const response = await axios.get(`/game/state/${roomId}`)
     const stateJson = response.data?.code === 200 ? response.data.data?.stateJson : null
     return stateJson ? JSON.parse(stateJson) : null
   } catch {
@@ -1707,7 +1702,6 @@ const getAiConfig = async (player) => {
     const config = response.data.code === 200 ? response.data.data : null
     if (config) {
       config.language = config.language || 'zh-CN'
-      config.apiKey = cleanApiKey(getAiPlayerKey(player.aiPlayerId) || getGlobalApiKey())
       aiConfigCache.set(player.aiPlayerId, config)
       return config
     }
@@ -1725,22 +1719,6 @@ const parseStructuredResponse = (content) => {
   if (start < 0 || end <= start) return null
   try { return JSON.parse(stripped.slice(start, end + 1)) } catch { return null }
 }
-
-const normalizeApiUrl = (baseUrl, modelType) => {
-  let url = (baseUrl || (isAnthropicModel(modelType) ? 'https://api.anthropic.com/v1' : 'https://api.deepseek.com/v1')).trim().replace(/\/+$/, '')
-  if (!/^https?:\/\//i.test(url)) url = `https://${url}`
-  if (isAnthropicModel(modelType)) {
-    if (/\/messages$/.test(url)) return url
-    return url.endsWith('/v1') ? `${url}/messages` : `${url}/v1/messages`
-  }
-  if (!/\/chat\/completions$/.test(url)) {
-    const hasPath = /\/[^/]+$/.test(url.replace(/^https?:\/\/[^/]+/, ''))
-    url += `${hasPath ? '' : '/v1'}/chat/completions`
-  }
-  return url
-}
-
-const cleanApiKey = apiKey => (apiKey || '').replace(/`/g, '').trim().replace(/^['"]|['"]$/g, '')
 
 const isAnthropicModel = modelType => ['claude', 'anthropic'].includes(String(modelType || '').toLowerCase())
 
@@ -1803,86 +1781,35 @@ const reportAiRequestFailure = (error, providerKey = '') => {
   addRefereeMessage('模型服务暂时不可用，已重试并使用本地逻辑继续。', { visibility: 'god', detail: `${status}${providerKey ? `（供应商：${providerKey}）` : ''}。503通常表示上游服务繁忙或临时不可用，并非游戏流程错误。` })
 }
 
-const callStructuredAi = async (config, systemPrompt, userPrompt) => {
-  if (!config?.apiKey) return null
+const callStructuredAi = async (config, systemPrompt, userPrompt, player) => {
+  if (!config?.hasApiKey || !config?.id || !player?.id) return null
   const modelType = String(config.modelType || '').toLowerCase()
-  const isAnthropic = isAnthropicModel(modelType)
   const providerKey = providerKeyOf(config)
   aiRequestState.pending += 1
-  const temperature = typeof config.temperature === 'number'
-    ? (config.temperature > 2 ? config.temperature / 10 : config.temperature)
-    : 0.7
-  const maxTokens = Math.min(2200, Math.max(900, Number(config.maxTokens) || 1000))
-  const apiKey = cleanApiKey(config.apiKey)
-  const buildRequestBody = () => isAnthropic
-    ? {
-        model: config.modelName || 'claude-3-5-sonnet-latest',
-        max_tokens: maxTokens,
-        temperature,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userPrompt }]
-      }
-    : {
-        model: config.modelName || 'deepseek-chat',
-        messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
-        temperature,
-        max_tokens: maxTokens,
-        response_format: { type: 'json_object' }
-      }
-  const buildHeaders = () => {
-    const headers = { 'Content-Type': 'application/json' }
-    if (isAnthropic) {
-      headers['x-api-key'] = apiKey
-      headers['anthropic-version'] = '2023-06-01'
-    } else {
-      headers.Authorization = `Bearer ${apiKey}`
-    }
-    return headers
-  }
-  const extractMessage = data => {
-    if (isAnthropic) {
-      const blocks = data?.content
-      let text = ''
-      let thinking = ''
-      if (Array.isArray(blocks)) {
-        for (const block of blocks) {
-          if (typeof block === 'string') text += block
-          else if (block?.type === 'text') text += block.text || ''
-          else if (block?.type === 'thinking') thinking += block.thinking || ''
-        }
-      } else if (typeof blocks === 'string') text = blocks
-      return { text, thinking }
-    }
-    const message = data.choices?.[0]?.message || data.output?.choices?.[0]?.message || {}
-    return { text: message.content, thinking: message.reasoning_content || '' }
-  }
+  const messages = isAnthropicModel(modelType)
+    ? [{ role: 'user', content: `${systemPrompt}\n\n${userPrompt}` }]
+    : [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }]
   let lastError = null
   try {
     for (let attempt = 1; attempt <= AI_MAX_ATTEMPTS; attempt++) {
       await waitWhilePaused()
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 45000)
       let releaseSlot = null
       try {
         releaseSlot = await acquireAiRequestSlot(providerKey)
         aiRequestState.inFlight += 1
-        const response = await fetch(normalizeApiUrl(config.apiBaseUrl, modelType), {
-          method: 'POST',
-          headers: buildHeaders(),
-          body: JSON.stringify(buildRequestBody()),
-          signal: controller.signal
-        })
-        if (!response.ok) {
-          const error = new Error(`HTTP ${response.status}`)
-          error.status = response.status
-          error.retryAfter = response.headers.get('retry-after') || ''
+        const response = await axios.post('/ai/model/chat', {
+          roomId: Number(roomId),
+          gamePlayerId: Number(player.id),
+          aiPlayerId: Number(config.id),
+          messages
+        }, { timeout: 40000 })
+        if (response.data?.code !== 200) {
+          const error = new Error(response.data?.message || '模型服务调用失败')
+          error.status = response.data?.code
           throw error
         }
-        const data = await response.json()
-        const { text, thinking } = extractMessage(data)
-        const parsed = parseStructuredResponse(text)
-        if (parsed && !parsed.thinking && thinking) parsed.thinking = thinking
-        if (!parsed) throw new Error('Invalid response format')
+        const parsed = parseStructuredResponse(response.data?.data?.content)
+        if (!parsed) throw new Error('模型返回格式无效')
         recordAiProviderResult(providerKey, true)
         aiRequestState.succeeded += 1
         aiRequestState.lastStatus = 'OK'
@@ -1892,17 +1819,12 @@ const callStructuredAi = async (config, systemPrompt, userPrompt) => {
       } catch (error) {
         lastError = error
         recordAiProviderResult(providerKey, false)
-        const retryable = AI_RETRYABLE_STATUSES.has(error?.status) || error?.name === 'AbortError' || error?.name === 'TypeError'
+        const retryable = [502, 503, 504].includes(error?.status) || error?.code === 'ECONNABORTED' || error?.name === 'TypeError'
         if (!retryable || attempt >= AI_MAX_ATTEMPTS) break
-        const retryAfter = Number(error?.retryAfter)
-        const backoff = Number.isFinite(retryAfter) && retryAfter > 0
-          ? Math.min(8000, retryAfter * 1000)
-          : Math.min(8000, 1200 * (2 ** (attempt - 1)))
-        await delay(backoff + Math.floor(Math.random() * 300))
+        await delay(Math.min(8000, 1000 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 300))
       } finally {
         if (releaseSlot) releaseSlot()
         if (aiRequestState.inFlight > 0) aiRequestState.inFlight -= 1
-        clearTimeout(timeout)
       }
     }
     reportAiRequestFailure(lastError, providerKey)
@@ -2137,7 +2059,7 @@ const requestPlayerDecision = async (player, action, extra = {}) => {
   const prompts = buildDecisionPrompts(player, action, extra, config)
   aiThinkingPlayers.value = [...new Set([...aiThinkingPlayers.value, player.id])]
   try {
-    const result = await callStructuredAi(config, prompts.systemPrompt, prompts.userPrompt)
+    const result = await callStructuredAi(config, prompts.systemPrompt, prompts.userPrompt, player)
     await waitWhilePaused()
     return { ...(result || {}), language: prompts.language, usedLocalFallback: !result }
   } finally {

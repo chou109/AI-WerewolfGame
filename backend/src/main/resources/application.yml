@@ -67,6 +67,9 @@ mybatis-plus:
 
 # 应用配置
 app:
+  database:
+    # 本地演示账号/API玩家数据默认关闭；仅在明确设置 APP_SEED_DEMO_DATA=true 时写入。
+    seed-demo-data: ${APP_SEED_DEMO_DATA:false}
   cors:
     # 允许跨域访问的前端来源（逗号分隔）。部署到其他域名/端口时在这里添加。
     allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}

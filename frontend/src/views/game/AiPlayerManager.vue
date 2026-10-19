@@ -246,7 +246,7 @@ watch(
   () => aiPlayerForm.modelType,
   (newType) => {
     if (newType === 'modelscope') {
-      aiPlayerForm.apiBaseUrl = 'https://api.modelscope.cn/v1'
+      aiPlayerForm.apiBaseUrl = 'https://api-inference.modelscope.cn/v1'
     } else if (newType === 'openai') {
       aiPlayerForm.apiBaseUrl = 'https://api.openai.com/v1'
     } else if (newType === 'anthropic') {
@@ -302,7 +302,7 @@ const deleteAiPlayer = async (id) => {
 
 const fetchModelList = async () => {
   if (!aiPlayerForm.apiKey) {
-    ElMessage.warning('请先输入API Key')
+    ElMessage.warning('请先输入本次测试使用的API Key（不会保存在浏览器）')
     return
   }
   
@@ -318,20 +318,11 @@ const fetchModelList = async () => {
   
   fetchingModels.value = true
   try {
-    // 确保API Base URL格式正确
-    let apiUrl = aiPlayerForm.apiBaseUrl.trim()
-    if (!apiUrl.startsWith('http')) {
-      apiUrl = 'https://' + apiUrl
-    }
-    if (!apiUrl.endsWith('/')) {
-      apiUrl += '/'
-    }
-    
-    const response = await axios.get(`${apiUrl}models`, {
-      headers: {
-        'Authorization': `Bearer ${aiPlayerForm.apiKey}`
-      }
-    })
+    const response = await axios.post('/ai/model/models', {
+      apiBaseUrl: aiPlayerForm.apiBaseUrl.trim(),
+      modelType: aiPlayerForm.modelType,
+      apiKey: aiPlayerForm.apiKey.trim()
+    }, { timeout: 15000 })
     
     if (response.data && Array.isArray(response.data.data)) {
       modelList.value = response.data.data

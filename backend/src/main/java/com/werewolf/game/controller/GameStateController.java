@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.servlet.http.HttpServletRequest;
@@ -30,9 +29,7 @@ public class GameStateController {
     private JdbcTemplate jdbcTemplate;
 
     @GetMapping("/{roomId}")
-    public Map<String, Object> getState(@PathVariable Long roomId,
-                                        @RequestParam(name = "viewerId", required = false) Long viewerId,
-                                        HttpServletRequest request) {
+    public Map<String, Object> getState(@PathVariable Long roomId, HttpServletRequest request) {
         Long userId = currentUserId(request);
         if (!canAccess(roomId, userId)) {
             return MapUtil.of("code", 403, "message", "无权访问该房间的游戏状态");
@@ -49,8 +46,13 @@ public class GameStateController {
         }
         Map<String, Object> row = rows.get(0);
         String stateJson = row.get("state_json") == null ? "" : row.get("state_json").toString();
-        boolean projected = viewerId != null || !isRoomCreator(roomId, userId);
+        boolean roomCreator = isRoomCreator(roomId, userId);
+        boolean projected = !roomCreator;
         if (projected) {
+            Long viewerId = findGamePlayerId(roomId, userId);
+            if (viewerId == null) {
+                return MapUtil.of("code", 403, "message", "未找到当前用户对应的房间座位");
+            }
             String projectedJson = GameStateProjection.project(stateJson, viewerId);
             if (projectedJson == null) {
                 return MapUtil.of("code", 500, "message", "游戏快照投影失败");
@@ -127,6 +129,17 @@ public class GameStateController {
         } catch (NumberFormatException exception) {
             return null;
         }
+    }
+
+    private Long findGamePlayerId(Long roomId, Long userId) {
+        if (roomId == null || userId == null) return null;
+        List<Long> playerIds = jdbcTemplate.query(
+                "SELECT id FROM game_player WHERE room_id = ? AND user_id = ? AND status = 1 ORDER BY id LIMIT 1",
+                (resultSet, rowNum) -> resultSet.getLong("id"),
+                roomId,
+                userId
+        );
+        return playerIds.isEmpty() ? null : playerIds.get(0);
     }
 
     private boolean canAccess(Long roomId, Long userId) {
